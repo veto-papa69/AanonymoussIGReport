@@ -1,4 +1,3 @@
-
 import os
 import json
 from datetime import datetime, timedelta
@@ -114,7 +113,8 @@ async def admin(update: Update, context: CallbackContext):
         except:
             continue
     
-    stats = STRINGS['en']['stats'].format(total=total_users, active=active_users)
+    lang = user_db.get(str(update.effective_user.id), {}).get('lang', 'en')
+    stats = STRINGS[lang]['stats'].format(total=total_users, active=active_users)
 
     keyboard = [
         [InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast_msg")],
@@ -124,7 +124,6 @@ async def admin(update: Update, context: CallbackContext):
     await update.message.reply_text(
         stats + "\n\nSelect an action:",
         reply_markup=InlineKeyboardMarkup(keyboard)
-    )
     return ADMIN_PANEL
 
 async def set_language(update: Update, context: CallbackContext):
@@ -158,7 +157,6 @@ async def receive_username(update: Update, context: CallbackContext):
     await update.message.reply_text(
         STRINGS[lang]['choose_report_type'], 
         reply_markup=InlineKeyboardMarkup(keyboard)
-    )
     return REPORT_TYPE
 
 async def receive_report_type(update: Update, context: CallbackContext):
@@ -195,7 +193,6 @@ async def receive_impersonation_url(update: Update, context: CallbackContext):
     await update.message.reply_text(
         STRINGS[lang]['confirm'], 
         reply_markup=InlineKeyboardMarkup(keyboard)
-    )
     return LOOP
 
 async def handle_loop_buttons(update: Update, context: CallbackContext):
@@ -234,9 +231,14 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
     
     if query.data == "admin_stats":
         total_users = len(user_db)
-        await query.edit_message_text(f"📊 Total Users: {total_users}")
+        lang = user_db.get(str(query.from_user.id), {}).get('lang', 'en')
+        await query.edit_message_text(STRINGS[lang]['stats'].format(total=total_users, active="N/A"))
     
     return ADMIN_PANEL
+
+async def post_init(application):
+    # Dummy initialization function required by PTB v20.7
+    await application.bot.set_my_commands([])
 
 def main():
     BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -246,7 +248,10 @@ def main():
         return
 
     try:
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        app = (ApplicationBuilder()
+               .token(BOT_TOKEN)
+               .post_init(post_init)  # Required for PTB v20.7
+               .build())
 
         conv = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
@@ -265,7 +270,7 @@ def main():
         app.add_handler(CommandHandler("admin", admin))
         
         print("Bot started successfully!")
-        app.run_polling(drop_pending_updates=True)
+        app.run_polling()
         
     except Exception as e:
         print(f"Error starting bot: {e}")
