@@ -160,7 +160,13 @@ async def handle_loop_buttons(update: Update, context: CallbackContext):
         await query.edit_message_text(STRINGS[lang]['stop_report'])
         return LOOP
 
-app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    print("ERROR: BOT_TOKEN environment variable not found!")
+    print("Please set your Telegram bot token in the environment variables.")
+    exit(1)
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 conv = ConversationHandler(
     entry_points=[CommandHandler('start', start)],
