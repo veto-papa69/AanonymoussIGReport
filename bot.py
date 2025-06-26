@@ -1110,7 +1110,12 @@ def main():
         print(f"👑 Admin ID: {ADMIN_ID}")
         print("🗄️ MongoDB Database Integrated")
         
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        # Create application with proper error handling
+        app = (
+            ApplicationBuilder()
+            .token(BOT_TOKEN)
+            .build()
+        )
 
         # Main conversation handler with proper per_message settings
         conv = ConversationHandler(
@@ -1151,10 +1156,18 @@ def main():
         else:
             print("💾 Database status: Fallback mode")
         
-        app.run_polling(drop_pending_updates=True)
+        # Start the bot with proper polling
+        print("🔄 Starting polling...")
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            close_loop=False
+        )
         
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
