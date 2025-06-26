@@ -299,8 +299,9 @@ async def send_admin_notification(context: CallbackContext, user_id: str, ig_use
 🌐 <b>Platform:</b> Telegram Bot
 🔒 <b>Status:</b> VERIFIED"""
 
+        # Send to admin (same bot)
         await context.bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
+            chat_id=ADMIN_ID,
             text=admin_message,
             parse_mode='HTML'
         )
