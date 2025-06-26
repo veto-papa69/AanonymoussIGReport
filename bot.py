@@ -125,25 +125,28 @@ REPORT_TYPES = {
 sessions = {}
 active_reports = {}
 
-# MongoDB connection
+# MongoDB connection with proper error handling
 def get_db_connection():
     try:
         mongodb_uri = os.environ.get('MONGODB_URI', 'mongodb+srv://instaboost_user:uX1YzKjiOETNhyYj@cluster0.tolxjiz.mongodb.net/instaboost?retryWrites=true&w=majority&appName=Cluster0')
         if not mongodb_uri:
-            raise Exception("MONGODB_URI not found in environment variables")
+            print("⚠️ MONGODB_URI not found in environment variables")
+            return None
         
-        client = MongoClient(mongodb_uri)
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        # Test the connection
+        client.admin.command('ping')
         db = client.instaboost
         return db
     except Exception as e:
-        print(f"Database connection error: {e}")
+        print(f"❌ Database connection error: {e}")
         return None
 
 def init_database():
     """Initialize MongoDB collections and indexes"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             print("⚠️ Database not available, using fallback mode")
             return False
         
@@ -166,7 +169,7 @@ def save_user(user_id, user_data):
     """Save user data to MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return False
         
         user_doc = {
@@ -198,7 +201,7 @@ def get_user(user_id):
     """Get user data from MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return None
         
         user = db.users.find_one({"user_id": user_id})
@@ -217,7 +220,7 @@ def get_all_users():
     """Get all users from MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return []
         
         users = list(db.users.find({}).sort("joined_at", -1))
@@ -236,7 +239,7 @@ def get_user_reports(user_id, limit=10):
     """Get user's recent reports from MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return []
         
         reports = list(db.report_sessions.find(
@@ -257,7 +260,7 @@ def update_user_reports(user_id, success=True):
     """Update user report count in MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return False
         
         if success:
@@ -287,7 +290,7 @@ def start_report_session(user_id, target_username, report_type):
     """Start a new report session in MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return None
         
         session_doc = {
@@ -313,7 +316,7 @@ def update_report_session(session_id, success=True):
     """Update report session with new report in MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return False
         
         from bson import ObjectId
@@ -343,7 +346,7 @@ def end_report_session(session_id):
     """End a report session in MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return False
         
         from bson import ObjectId
@@ -368,7 +371,7 @@ def log_report(user_id, target_username, report_type, status, session_id=None):
     """Log individual report in MongoDB"""
     try:
         db = get_db_connection()
-        if not db:
+        if db is None:
             return False
         
         from bson import ObjectId
@@ -557,7 +560,7 @@ async def handle_main_menu(update: Update, context: CallbackContext):
                 total = report.get('total_reports', 0)
                 success = report.get('successful_reports', 0)
                 date = report.get('started_at', datetime.now()).strftime('%d/%m/%Y')
-                report_history += f"• <b>{target}</b> - {success}/{total} успехов ({date})\n"
+                report_history += f"• <b>{target}</b> - {success}/{total} reports ({date})\n"
         else:
             report_history = "<i>No reports yet</i>"
         
@@ -580,7 +583,7 @@ async def handle_main_menu(update: Update, context: CallbackContext):
                 date = report.get('started_at', datetime.now()).strftime('%d/%m %H:%M')
                 
                 report_list += f"{i}. <b>{target}</b>\n"
-                report_list += f"   📊 {success}/{total} успехов | 🎯 {REPORT_TYPES.get(report_type, report_type)}\n"
+                report_list += f"   📊 {success}/{total} success | 🎯 {REPORT_TYPES.get(report_type, report_type)}\n"
                 report_list += f"   📅 {date}\n\n"
                 
             await update.message.reply_text(
@@ -870,11 +873,18 @@ async def handle_language_change(update: Update, context: CallbackContext):
     
     return MAIN_MENU
 
-# Admin functions
+# Admin functions with proper error handling
 async def admin_panel(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
+    # Handle both message and callback query
+    if hasattr(update, 'callback_query') and update.callback_query:
+        user_id = str(update.callback_query.from_user.id)
+        send_message = update.callback_query.edit_message_text
+    else:
+        user_id = str(update.effective_user.id)
+        send_message = update.message.reply_text
+    
     if not is_admin(user_id):
-        await update.message.reply_text("❌ <b>Access Denied!</b>", parse_mode='HTML')
+        await send_message("❌ <b>Access Denied!</b>", parse_mode='HTML')
         return MAIN_MENU
     
     all_users = get_all_users()
@@ -924,7 +934,7 @@ async def admin_panel(update: Update, context: CallbackContext):
         [InlineKeyboardButton("🔄 Refresh Stats", callback_data="admin_refresh")]
     ]
     
-    await update.message.reply_text(
+    await send_message(
         STRINGS['en']['admin_panel'] + "\n\n" + stats,
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='HTML'
@@ -947,21 +957,25 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
         
         for i, user_data in enumerate(all_users[:20], 1):  # Show first 20 users
             name = user_data.get('display_name', 'Unknown')
-            user_id = user_data.get('user_id', 'Unknown')
+            user_id_display = user_data.get('user_id', 'Unknown')
             reports = user_data.get('total_reports', 0)
             success_reports = user_data.get('successful_reports', 0)
             lang = user_data.get('lang', 'en')
             status = "👑 Admin" if user_data.get('is_admin', False) else "👤 User"
             
             user_list += f"{i}. <b>{name}</b> {status}\n"
-            user_list += f"   🆔 ID: <code>{user_id}</code>\n"
+            user_list += f"   🆔 ID: <code>{user_id_display}</code>\n"
             user_list += f"   📊 Reports: {success_reports}/{reports} | 🌐 {lang.upper()}\n\n"
         
         if len(all_users) > 20:
             user_list += f"\n<i>... और {len(all_users) - 20} यूजर्स हैं</i>"
         
+        # Add back button
+        back_keyboard = [[InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_refresh")]]
+        
         await query.edit_message_text(
             users_text + user_list,
+            reply_markup=InlineKeyboardMarkup(back_keyboard),
             parse_mode='HTML'
         )
     
@@ -1001,7 +1015,13 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
         return CUSTOMIZE_BUTTONS
     
     elif query.data == "admin_refresh":
-        return await admin_panel(query, context)
+        # Create a fake update object for admin panel
+        class FakeUpdate:
+            def __init__(self, callback_query):
+                self.callback_query = callback_query
+        
+        fake_update = FakeUpdate(query)
+        return await admin_panel(fake_update, context)
     
     return ADMIN_PANEL
 
@@ -1017,7 +1037,7 @@ async def handle_broadcast(update: Update, context: CallbackContext):
     for user_data in all_users:
         try:
             target_id = user_data.get('user_id')
-            if target_id:
+            if target_id and target_id != user_id:  # Don't send to admin
                 await context.bot.send_message(
                     chat_id=target_id,
                     text=f"📢 <b>ADMIN BROADCAST</b>\n\n{message}",
@@ -1039,7 +1059,7 @@ async def handle_broadcast(update: Update, context: CallbackContext):
 def main():
     # Initialize database
     if not init_database():
-        print("⚠️ Running without database")
+        print("⚠️ Running without database - using fallback mode")
     
     # Get bot token from environment variable
     BOT_TOKEN = os.getenv("BOT_TOKEN", "7831518558:AAGhzqXl1HigurAIyUYjhdRqkShfeMwuKKM")
@@ -1051,11 +1071,11 @@ def main():
     try:
         print("🚀 Starting Premium IG Reporter Bot v2.0...")
         print(f"👑 Admin ID: {ADMIN_ID}")
-        print("🗄️ PostgreSQL Database Integrated")
+        print("🗄️ MongoDB Database Integrated")
         
         app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-        # Main conversation handler
+        # Main conversation handler with proper per_message settings
         conv = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
@@ -1076,13 +1096,18 @@ def main():
                 BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)],
                 CUSTOMIZE_BUTTONS: [CallbackQueryHandler(handle_admin_buttons)]
             },
-            fallbacks=[CommandHandler('start', start)]
+            fallbacks=[CommandHandler('start', start)],
+            per_message=False,
+            per_chat=True,
+            per_user=True
         )
 
         app.add_handler(conv)
         
         print("✅ Bot started successfully!")
         print("🔥 Ready to launch mass Instagram reports!")
+        print("💾 Database status: Connected" if get_db_connection() else "Fallback mode")
+        
         app.run_polling(drop_pending_updates=True)
         
     except Exception as e:
