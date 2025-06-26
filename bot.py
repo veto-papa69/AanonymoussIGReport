@@ -2,6 +2,10 @@ import os
 import re
 import random
 import asyncio
+import time
+import http.server
+import socketserver
+from threading import Thread
 from pymongo import MongoClient
 from datetime import datetime
 from telegram import (
@@ -25,6 +29,7 @@ from telegram.ext import (
 ADMIN_ID = 6881713177  # Your admin ID
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7275717734:AAE6bq0Mdypn_wQL6F1wpphzEtLAco3_B3Y")
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://instaboost_user:uX1YzKjiOETNhyYj@cluster0.tolxjiz.mongodb.net/instaboost?retryWrites=true&w=majority&appName=Cluster0")
+PORT = int(os.environ.get('PORT', 8000))  # Render requires port binding
 
 # States
 START, LANGUAGE, REGISTER, IG_USERNAME, IG_PASSWORD, MAIN_MENU, REPORT_MENU, \
@@ -85,13 +90,37 @@ REPORT_TYPES = {
     'fake': '🚫 Fake Account'
 }
 
+# HTTP Server for Render port binding
+def run_http_server():
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(("", PORT), handler) as httpd:
+        print(f"🌐 HTTP server running on port {PORT}")
+        httpd.serve_forever()
+
+# Start HTTP server in background thread
+if os.environ.get('RENDER', False):
+    Thread(target=run_http_server, daemon=True).start()
+
 # Database functions
 def get_db():
-    client = MongoClient(MONGODB_URI)
-    return client.ig_reporter
+    client = MongoClient(
+        MONGODB_URI,
+        serverSelectionTimeoutMS=5000,  # 5-second timeout
+        connectTimeoutMS=30000,          # 30-second connection timeout
+        socketTimeoutMS=30000            # 30-second socket timeout
+    )
+    try:
+        client.server_info()  # Test connection
+        return client.ig_reporter
+    except Exception as e:
+        print(f"⚠️ Database connection failed: {e}")
+        return None
 
 def save_user(user_id, data):
     db = get_db()
+    if not db:
+        return
+        
     user_data = {
         'user_id': user_id,
         'username': data.get('username', ''),
@@ -111,10 +140,14 @@ def save_user(user_id, data):
 
 def get_user(user_id):
     db = get_db()
+    if not db:
+        return None
     return db.users.find_one({'user_id': user_id})
 
 def increment_reports(user_id):
     db = get_db()
+    if not db:
+        return
     db.users.update_one(
         {'user_id': user_id},
         {'$inc': {'reports': 1}}
@@ -165,6 +198,10 @@ def get_admin_keyboard():
 # Handlers
 async def start(update: Update, context: CallbackContext) -> int:
     user_id = str(update.effective_user.id)
+    
+    # Prevent conflict during restarts
+    if os.environ.get('RENDER'):
+        await asyncio.sleep(random.uniform(1, 3))
     
     # Check if user exists
     user = get_user(user_id)
@@ -478,6 +515,10 @@ async def admin_panel(update: Update, context: CallbackContext) -> int:
     
     elif text == "📊 User Stats":
         db = get_db()
+        if not db:
+            await update.message.reply_text("⚠️ Database connection failed")
+            return ADMIN_PANEL
+            
         total_users = db.users.count_documents({})
         total_reports = db.users.aggregate([{
             "$group": {"_id": None, "total": {"$sum": "$reports"}}
@@ -502,6 +543,10 @@ async def broadcast_message(update: Update, context: CallbackContext) -> int:
     message = update.message.text
     db = get_db()
     
+    if not db:
+        await update.message.reply_text("⚠️ Database connection failed")
+        return ADMIN_PANEL
+        
     users = db.users.find()
     count = 0
     
@@ -559,7 +604,17 @@ def main():
     
     # Start the bot
     print("🚀 Bot is running...")
-    app.run_polling()
+    app.run_polling(
+        drop_pending_updates=True,  # Prevents conflict errors
+        close_loop=False             # Avoids asyncio conflicts
+    )
 
 if __name__ == '__main__':
+    # Render deployment check
+    if os.environ.get('RENDER'):
+        print("🚦 Render environment detected")
+        print(f"🔌 Using PORT: {PORT}")
+        print("⏳ Preventing instance conflicts...")
+        time.sleep(random.uniform(1, 3))
+        
     main()
