@@ -1181,8 +1181,19 @@ def main():
         server_thread = threading.Thread(target=start_server, daemon=True)
         server_thread.start()
         
-        # Start bot polling
-        app.run_polling(drop_pending_updates=True)
+        # Start bot polling with conflict handling
+        try:
+            app.run_polling(drop_pending_updates=True)
+        except Exception as polling_error:
+            if "Conflict" in str(polling_error) and "getUpdates" in str(polling_error):
+                print("⚠️ Bot instance conflict detected!")
+                print("🔄 Another bot instance is already running.")
+                print("💡 This is normal for deployment - keeping web server alive.")
+                # Keep web server running even if polling fails
+                while True:
+                    await asyncio.sleep(60)
+            else:
+                raise polling_error
         
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
