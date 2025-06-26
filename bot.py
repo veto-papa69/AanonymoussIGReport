@@ -30,8 +30,9 @@ MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://instaboost_user:uX1YzKjiOE
 # Conversation states
 (
     MAIN_MENU, REGISTER, IG_LOGIN, IG_USERNAME, IG_PASSWORD,
-    REPORT_MENU, USERNAME_INPUT, REPORT_TYPE, REPORT_LOOP
-) = range(9)
+    REPORT_MENU, USERNAME_INPUT, REPORT_TYPE, REPORT_LOOP,
+    ADMIN_PANEL, BROADCAST_MESSAGE
+) = range(11)
 
 # ===================== DATABASE FUNCTIONS =====================
 def get_db_connection():
@@ -56,9 +57,15 @@ def init_database():
         if "reports" not in db.list_collection_names():
             db.create_collection("reports")
             
-        # Create indexes
-        db.users.create_index("user_id", unique=True)
-        db.reports.create_index("user_id")
+        # Create indexes with unique names to avoid conflicts
+        index_info = db.users.index_information()
+        
+        # Check if index already exists
+        if "user_id_index" not in index_info:
+            db.users.create_index([("user_id", 1)], name="user_id_index", unique=True)
+        
+        if "report_user_id_index" not in index_info:
+            db.reports.create_index([("user_id", 1)], name="report_user_id_index")
         
         print("✅ Database initialized successfully")
         return True
@@ -593,7 +600,8 @@ async def back_to_main(update: Update, context: CallbackContext):
 # ===================== MAIN APPLICATION =====================
 def main():
     # Initialize database
-    init_database()
+    if not init_database():
+        print("⚠️ Running without database support")
     
     # Create application
     app = ApplicationBuilder().token(BOT_TOKEN).build()
