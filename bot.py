@@ -1113,7 +1113,7 @@ def main():
         # Create application with proper error handling
         app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-        # Main conversation handler with proper per_message settings
+        # Main conversation handler (simplified per_message settings)
         conv = ConversationHandler(
             entry_points=[CommandHandler('start', start)],
             states={
@@ -1135,66 +1135,76 @@ def main():
                 CUSTOMIZE_BUTTONS: [CallbackQueryHandler(handle_admin_buttons)]
             },
             fallbacks=[CommandHandler('start', start)],
-            per_message=True,
             per_chat=True,
-            per_user=True
+            per_user=False
         )
 
         app.add_handler(conv)
         
-        print("✅ Bot started successfully!")
-        print("🔥 Ready to launch mass Instagram reports!")
+        print("✅ Bot handlers configured successfully!")
         
-        # Check database connection safely
-        db_conn = get_db_connection()
-        if db_conn is not None:
-            print("💾 Database status: Connected")
-        else:
-            print("💾 Database status: Fallback mode")
+        # Check if we're in production (Render)
+        is_production = os.environ.get('RENDER') or os.environ.get('PORT')
         
-        # Start the bot with proper polling
-        print("🔄 Starting polling...")
-        
-        # For Render deployment, start a simple web server
-        import threading
-        from http.server import HTTPServer, BaseHTTPRequestHandler
-        
-        class HealthHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(200)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(b'Bot is running!')
+        if is_production:
+            print("🌐 Production mode detected - Starting web server")
             
-            def log_message(self, format, *args):
-                pass  # Suppress HTTP logs
-        
-        # Start health check server on port 10000 (Render's default)
-        port = int(os.environ.get('PORT', 10000))
-        httpd = HTTPServer(('0.0.0.0', port), HealthHandler)
-        
-        def start_server():
-            print(f"🌐 Health check server started on port {port}")
-            httpd.serve_forever()
-        
-        # Start server in background thread
-        server_thread = threading.Thread(target=start_server, daemon=True)
-        server_thread.start()
-        
-        # Start bot polling with conflict handling
-        try:
-            app.run_polling(drop_pending_updates=True)
-        except Exception as polling_error:
-            if "Conflict" in str(polling_error) and "getUpdates" in str(polling_error):
-                print("⚠️ Bot instance conflict detected!")
-                print("🔄 Another bot instance is already running.")
-                print("💡 This is normal for deployment - keeping web server alive.")
-                # Keep web server running even if polling fails
-                import time
-                while True:
-                    time.sleep(60)
+            # For production deployment, start web server
+            import threading
+            from http.server import HTTPServer, BaseHTTPRequestHandler
+            
+            class HealthHandler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write(b'Premium IG Reporter Bot is running!')
+                
+                def log_message(self, format, *args):
+                    pass  # Suppress HTTP logs
+            
+            # Start health check server
+            port = int(os.environ.get('PORT', 10000))
+            httpd = HTTPServer(('0.0.0.0', port), HealthHandler)
+            
+            def start_server():
+                print(f"🌐 Health check server started on port {port}")
+                httpd.serve_forever()
+            
+            # Start server in background thread
+            server_thread = threading.Thread(target=start_server, daemon=True)
+            server_thread.start()
+            
+            # Try polling with better conflict handling
+            try:
+                print("🔄 Starting bot polling...")
+                app.run_polling(drop_pending_updates=True, allowed_updates=None)
+            except Exception as polling_error:
+                error_str = str(polling_error)
+                if "Conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
+                    print("⚠️ Polling conflict detected - Bot may already be running elsewhere")
+                    print("💡 Keeping web server alive for deployment health checks")
+                    print("🔄 If this persists, ensure only one bot instance is running")
+                    
+                    # Keep server alive for health checks
+                    import time
+                    while True:
+                        time.sleep(60)
+                        print("📡 Health server active - waiting...")
+                else:
+                    print(f"❌ Unexpected polling error: {error_str}")
+                    raise polling_error
+        else:
+            print("💻 Development mode - Starting polling only")
+            # Check database connection
+            db_conn = get_db_connection()
+            if db_conn is not None:
+                print("💾 Database status: Connected")
             else:
-                raise polling_error
+                print("💾 Database status: Fallback mode")
+            
+            print("🔄 Starting polling...")
+            app.run_polling(drop_pending_updates=True)
         
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
