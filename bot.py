@@ -1135,7 +1135,7 @@ def main():
                 CUSTOMIZE_BUTTONS: [CallbackQueryHandler(handle_admin_buttons)]
             },
             fallbacks=[CommandHandler('start', start)],
-            per_message=False,
+            per_message=True,
             per_chat=True,
             per_user=True
         )
@@ -1154,6 +1154,34 @@ def main():
         
         # Start the bot with proper polling
         print("🔄 Starting polling...")
+        
+        # For Render deployment, start a simple web server
+        import threading
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        
+        class HealthHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'Bot is running!')
+            
+            def log_message(self, format, *args):
+                pass  # Suppress HTTP logs
+        
+        # Start health check server on port 10000 (Render's default)
+        port = int(os.environ.get('PORT', 10000))
+        httpd = HTTPServer(('0.0.0.0', port), HealthHandler)
+        
+        def start_server():
+            print(f"🌐 Health check server started on port {port}")
+            httpd.serve_forever()
+        
+        # Start server in background thread
+        server_thread = threading.Thread(target=start_server, daemon=True)
+        server_thread.start()
+        
+        # Start bot polling
         app.run_polling(drop_pending_updates=True)
         
     except Exception as e:
