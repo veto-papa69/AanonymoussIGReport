@@ -1151,7 +1151,7 @@ def main():
         else:
             print("💾 Database status: Fallback mode")
         
-        app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+        app.run_polling(drop_pending_updates=True)
         
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
