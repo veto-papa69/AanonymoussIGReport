@@ -8,6 +8,7 @@ from telegram.ext import (ApplicationBuilder, CallbackContext, CommandHandler, M
                           CallbackQueryHandler, ConversationHandler)
 import random
 import asyncio
+import threading
 
 # Constants
 ADMIN_ID = 6881713177
@@ -159,6 +160,7 @@ REPORT_TYPES = {
 # User session storage
 sessions = {}
 active_reports = {}
+reporting_tasks = {}  # New: Store active reporting tasks
 
 # MongoDB connection with proper error handling
 def get_db_connection():
@@ -1107,13 +1109,16 @@ async def handle_report_loop(update: Update, context: CallbackContext):
     report_type = context.user_data.get('report_type', 'spam')
     
     if query.data == 'start_report':
-        # Start infinite reporting
-        active_reports[user_id] = True
-        
         # Start new report session
         session_id = start_report_session(user_id, username, report_type)
         context.user_data['session_id'] = session_id
         context.user_data['strike_count'] = 0
+        
+        # Create and store reporting task
+        task = asyncio.create_task(
+            start_infinite_reporting(context, user_id, username, report_type, lang, session_id)
+        )
+        reporting_tasks[user_id] = task
         
         await query.edit_message_text(
             STRINGS[lang]['reporting_started'].format(username=username, ig_username=ig_username),
@@ -1128,11 +1133,12 @@ async def handle_report_loop(update: Update, context: CallbackContext):
             parse_mode='HTML'
         )
         
-        # Start the infinite reporting loop
-        await start_infinite_reporting(context, user_id, username, report_type, lang, session_id)
-        
     elif query.data == 'stop_report':
-        active_reports[user_id] = False
+        # Cancel the reporting task
+        if user_id in reporting_tasks:
+            reporting_tasks[user_id].cancel()
+            del reporting_tasks[user_id]
+        
         session_id = context.user_data.get('session_id')
         total_strikes = context.user_data.get('strike_count', 0)
         
@@ -1152,9 +1158,7 @@ async def handle_report_loop(update: Update, context: CallbackContext):
                 parse_mode='HTML'
             )
         
-        await asyncio.sleep(2)
-        
-        # Return to main menu
+        # Return to main menu immediately
         user_data = get_user(user_id) or {}
         updated_reports = user_data.get('total_reports', 0)
         
@@ -1194,7 +1198,11 @@ async def handle_stop_attack(update: Update, context: CallbackContext):
     ig_username = user_data.get('ig_username', 'Unknown')
     is_admin_user = is_admin(user_id)
     
-    active_reports[user_id] = False
+    # Cancel the reporting task
+    if user_id in reporting_tasks:
+        reporting_tasks[user_id].cancel()
+        del reporting_tasks[user_id]
+    
     session_id = context.user_data.get('session_id')
     total_strikes = context.user_data.get('strike_count', 0)
     
@@ -1206,9 +1214,7 @@ async def handle_stop_attack(update: Update, context: CallbackContext):
         parse_mode='HTML'
     )
     
-    await asyncio.sleep(2)
-    
-    # Return to main menu
+    # Return to main menu immediately
     user_data = get_user(user_id) or {}
     updated_reports = user_data.get('total_reports', 0)
     
@@ -1222,8 +1228,8 @@ async def handle_stop_attack(update: Update, context: CallbackContext):
 async def start_infinite_reporting(context: CallbackContext, user_id: str, username: str, report_type: str, lang: str, session_id: str):
     report_count = 0
     
-    while active_reports.get(user_id, False):
-        try:
+    try:
+        while True:
             report_count += 1
             context.user_data['strike_count'] = report_count
             
@@ -1257,10 +1263,11 @@ async def start_infinite_reporting(context: CallbackContext, user_id: str, usern
             # Random delay between 1-3 seconds
             await asyncio.sleep(random.uniform(1.5, 3.0))
             
-        except Exception as e:
-            print(f"Error in reporting loop: {e}")
-            active_reports[user_id] = False
-            break
+    except asyncio.CancelledError:
+        # Task was cancelled by user
+        pass
+    except Exception as e:
+        print(f"Error in reporting loop: {e}")
 
 async def handle_language_change(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -1524,15 +1531,16 @@ def main():
                     CallbackQueryHandler(handle_report_loop),
                     CallbackQueryHandler(handle_report_loop, pattern='^stop_report$'),
                     MessageHandler(filters.Regex(r'⏹️ Stop Attack|⏹️ अटैक बंद करें'), handle_stop_attack),
-                    MessageHandler(filters.Regex(r'⬅️ Back'), handle_stop_attack),
-                    MessageHandler(filters.Regex(r'🏠 Home|🏠 होम'), handle_stop_attack)
                 ],
                 ADMIN_PANEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_buttons)],
                 BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)],
                 SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_menu)],
                 HELP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_help_menu)]
             },
-            fallbacks=[CommandHandler('start', start)],
+            fallbacks=[
+                CommandHandler('start', start),
+                MessageHandler(filters.Regex(r'⬅️ Back|🏠 Home|🏠 होम'), handle_main_menu)
+            ],
             per_chat=True,
             per_user=False
         )
