@@ -1190,8 +1190,9 @@ def main():
                 print("🔄 Another bot instance is already running.")
                 print("💡 This is normal for deployment - keeping web server alive.")
                 # Keep web server running even if polling fails
+                import time
                 while True:
-                    await asyncio.sleep(60)
+                    time.sleep(60)
             else:
                 raise polling_error
         
