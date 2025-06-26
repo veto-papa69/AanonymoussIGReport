@@ -8,13 +8,8 @@ import socketserver
 from threading import Thread
 from pymongo import MongoClient
 from datetime import datetime
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    KeyboardButton
-)
+from telegram import Update
+from telegram.error import Conflict
 from telegram.ext import (
     ApplicationBuilder,
     CallbackContext,
@@ -24,6 +19,7 @@ from telegram.ext import (
     ConversationHandler,
     filters
 )
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 
 # Constants
 ADMIN_ID = 6881713177  # Your admin ID
@@ -55,7 +51,8 @@ STRINGS = {
         'report_failed': "❌ Report #{count} failed, retrying...",
         'report_stopped': "🛑 Reporting stopped!\n\nTotal reports sent: {count}",
         'admin_panel': "👑 <b>Admin Panel</b>",
-        'broadcast_sent': "📢 Broadcast sent to {count} users!"
+        'broadcast_sent': "📢 Broadcast sent to {count} users!",
+        'db_error': "⚠️ Database connection failed, please try again later"
     },
     'hi': {
         'welcome': "🔥 <b>प्रीमियम IG रिपोर्टर</b> 🔥\n\n🔐 <b>लॉगिन आवश्यक</b>\n\nबॉट का उपयोग करने के लिए कृपया अपनी Instagram साख से पहचान सत्यापित करें",
@@ -75,7 +72,8 @@ STRINGS = {
         'report_failed': "❌ रिपोर्ट #{count} विफल, पुनः प्रयास कर रहे हैं...",
         'report_stopped': "🛑 रिपोर्टिंग बंद कर दी गई!\n\nकुल रिपोर्ट भेजी गई: {count}",
         'admin_panel': "👑 <b>एडमिन पैनल</b>",
-        'broadcast_sent': "📢 {count} उपयोगकर्ताओं को प्रसारण भेजा गया!"
+        'broadcast_sent': "📢 {count} उपयोगकर्ताओं को प्रसारण भेजा गया!",
+        'db_error': "⚠️ डेटाबेस कनेक्शन विफल, कृपया बाद में पुनः प्रयास करें"
     }
 }
 
@@ -97,29 +95,30 @@ def run_http_server():
         print(f"🌐 HTTP server running on port {PORT}")
         httpd.serve_forever()
 
-# Start HTTP server in background thread
+# Start HTTP server in background thread if running on Render
 if os.environ.get('RENDER', False):
     Thread(target=run_http_server, daemon=True).start()
+    print(f"🚀 Starting HTTP server on port {PORT} for Render")
 
-# Database functions
+# Database functions - FIXED: Correct database object checking
 def get_db():
-    client = MongoClient(
-        MONGODB_URI,
-        serverSelectionTimeoutMS=5000,  # 5-second timeout
-        connectTimeoutMS=30000,          # 30-second connection timeout
-        socketTimeoutMS=30000            # 30-second socket timeout
-    )
     try:
+        client = MongoClient(
+            MONGODB_URI,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=30000,
+            socketTimeoutMS=30000
+        )
         client.server_info()  # Test connection
-        return client.ig_reporter
+        return client.get_database()
     except Exception as e:
         print(f"⚠️ Database connection failed: {e}")
         return None
 
 def save_user(user_id, data):
     db = get_db()
-    if not db:
-        return
+    if db is None:
+        return False
         
     user_data = {
         'user_id': user_id,
@@ -132,26 +131,38 @@ def save_user(user_id, data):
         'created_at': datetime.now(),
         'last_active': datetime.now()
     }
-    db.users.update_one(
-        {'user_id': user_id},
-        {'$set': user_data},
-        upsert=True
-    )
+    try:
+        db.users.update_one(
+            {'user_id': user_id},
+            {'$set': user_data},
+            upsert=True
+        )
+        return True
+    except Exception as e:
+        print(f"⚠️ Failed to save user: {e}")
+        return False
 
 def get_user(user_id):
     db = get_db()
-    if not db:
+    if db is None:
         return None
-    return db.users.find_one({'user_id': user_id})
+    try:
+        return db.users.find_one({'user_id': user_id})
+    except Exception as e:
+        print(f"⚠️ Failed to get user: {e}")
+        return None
 
 def increment_reports(user_id):
     db = get_db()
-    if not db:
+    if db is None:
         return
-    db.users.update_one(
-        {'user_id': user_id},
-        {'$inc': {'reports': 1}}
-    )
+    try:
+        db.users.update_one(
+            {'user_id': user_id},
+            {'$inc': {'reports': 1}}
+        )
+    except Exception as e:
+        print(f"⚠️ Failed to increment reports: {e}")
 
 # Validation functions
 def is_valid_username(username):
@@ -195,276 +206,351 @@ def get_admin_keyboard():
         [KeyboardButton("🏠 Main Menu")]
     ], resize_keyboard=True)
 
-# Handlers
+# Handlers with robust error handling
 async def start(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    
-    # Prevent conflict during restarts
-    if os.environ.get('RENDER'):
-        await asyncio.sleep(random.uniform(1, 3))
-    
-    # Check if user exists
-    user = get_user(user_id)
-    if user:
-        lang = user.get('language', 'en')
+    try:
+        user_id = str(update.effective_user.id)
+        
+        # Prevent conflict during restarts
+        if os.environ.get('RENDER'):
+            await asyncio.sleep(random.uniform(1, 3))
+        
+        # Check if user exists
+        user = get_user(user_id)
+        if user:
+            lang = user.get('language', 'en')
+            await update.message.reply_text(
+                STRINGS[lang]['main_menu'].format(
+                    ig_username=user.get('ig_username', ''),
+                    reports=user.get('reports', 0)
+                ),
+                reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
+                parse_mode='HTML'
+            )
+            return MAIN_MENU
+        
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(
-                ig_username=user.get('ig_username', ''),
-                reports=user.get('reports', 0)
-            ),
-            reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
+            STRINGS['en']['welcome'],
+            reply_markup=get_lang_keyboard(),
             parse_mode='HTML'
         )
-        return MAIN_MENU
-    
-    await update.message.reply_text(
-        STRINGS['en']['welcome'],
-        reply_markup=get_lang_keyboard(),
-        parse_mode='HTML'
-    )
-    return LANGUAGE
+        return LANGUAGE
+    except Exception as e:
+        print(f"⚠️ Error in start handler: {e}")
+        lang = context.user_data.get('language', 'en')
+        await update.message.reply_text(
+            STRINGS[lang]['db_error'],
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
 
 async def set_language(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    
-    lang = query.data.split('_')[1]
-    context.user_data['language'] = lang
-    
-    await query.edit_message_text(STRINGS[lang]['register'], parse_mode='HTML')
-    return REGISTER
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        lang = query.data.split('_')[1]
+        context.user_data['language'] = lang
+        
+        await query.edit_message_text(STRINGS[lang]['register'], parse_mode='HTML')
+        return REGISTER
+    except Exception as e:
+        print(f"⚠️ Error in set_language handler: {e}")
+        await query.edit_message_text("❌ An error occurred, please try again")
+        return ConversationHandler.END
 
 async def register(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    display_name = update.message.text.strip()
-    lang = context.user_data.get('language', 'en')
-    
-    if len(display_name) < 2:
-        await update.message.reply_text("❌ Name too short! Please enter at least 2 characters")
-        return REGISTER
-    
-    context.user_data['display_name'] = display_name
-    save_user(user_id, {
-        'display_name': display_name,
-        'language': lang
-    })
-    
-    await update.message.reply_text(STRINGS[lang]['ig_username'], parse_mode='HTML')
-    return IG_USERNAME
+    try:
+        user_id = str(update.effective_user.id)
+        display_name = update.message.text.strip()
+        lang = context.user_data.get('language', 'en')
+        
+        if len(display_name) < 2:
+            await update.message.reply_text("❌ Name too short! Please enter at least 2 characters")
+            return REGISTER
+        
+        context.user_data['display_name'] = display_name
+        if not save_user(user_id, {
+            'display_name': display_name,
+            'language': lang
+        }):
+            await update.message.reply_text(STRINGS[lang]['db_error'], parse_mode='HTML')
+            return ConversationHandler.END
+        
+        await update.message.reply_text(STRINGS[lang]['ig_username'], parse_mode='HTML')
+        return IG_USERNAME
+    except Exception as e:
+        print(f"⚠️ Error in register handler: {e}")
+        lang = context.user_data.get('language', 'en')
+        await update.message.reply_text(STRINGS[lang]['db_error'], parse_mode='HTML')
+        return ConversationHandler.END
 
 async def get_ig_username(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    username = update.message.text.strip()
-    lang = context.user_data.get('language', 'en')
-    
-    if not username:
-        await update.message.reply_text("❌ Please enter a valid Instagram username")
-        return IG_USERNAME
-    
-    context.user_data['ig_username'] = username
-    await update.message.reply_text(STRINGS[lang]['ig_password'], parse_mode='HTML')
-    return IG_PASSWORD
+    try:
+        user_id = str(update.effective_user.id)
+        username = update.message.text.strip()
+        lang = context.user_data.get('language', 'en')
+        
+        if not username:
+            await update.message.reply_text("❌ Please enter a valid Instagram username")
+            return IG_USERNAME
+        
+        context.user_data['ig_username'] = username
+        await update.message.reply_text(STRINGS[lang]['ig_password'], parse_mode='HTML')
+        return IG_PASSWORD
+    except Exception as e:
+        print(f"⚠️ Error in get_ig_username handler: {e}")
+        lang = context.user_data.get('language', 'en')
+        await update.message.reply_text(STRINGS[lang]['db_error'], parse_mode='HTML')
+        return ConversationHandler.END
 
 async def get_ig_password(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    password = update.message.text.strip()
-    lang = context.user_data.get('language', 'en')
-    ig_username = context.user_data.get('ig_username', '')
-    
-    if not password:
-        await update.message.reply_text("❌ Please enter your password")
-        return IG_PASSWORD
-    
-    # Save user with Instagram credentials
-    save_user(user_id, {
-        'ig_username': ig_username,
-        'ig_password': password,
-        'language': lang
-    })
-    
-    await update.message.reply_text(
-        STRINGS[lang]['login_success'].format(username=ig_username),
-        reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
-        parse_mode='HTML'
-    )
-    return MAIN_MENU
-
-async def main_menu(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    text = update.message.text
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    
-    if text == "⚔️ Report Account":
+    try:
+        user_id = str(update.effective_user.id)
+        password = update.message.text.strip()
+        lang = context.user_data.get('language', 'en')
+        ig_username = context.user_data.get('ig_username', '')
+        
+        if not password:
+            await update.message.reply_text("❌ Please enter your password")
+            return IG_PASSWORD
+        
+        # Save user with Instagram credentials
+        if not save_user(user_id, {
+            'ig_username': ig_username,
+            'ig_password': password,
+            'language': lang
+        }):
+            await update.message.reply_text(STRINGS[lang]['db_error'], parse_mode='HTML')
+            return ConversationHandler.END
+        
         await update.message.reply_text(
-            STRINGS[lang]['report_menu'],
-            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("🏠 Main Menu")]], resize_keyboard=True),
-            parse_mode='HTML'
-        )
-        return REPORT_MENU
-    
-    elif text == "👤 Profile":
-        await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(
-                ig_username=user.get('ig_username', ''),
-                reports=user.get('reports', 0)
-            ),
-            parse_mode='HTML'
-        )
-    
-    elif text == "📊 Stats":
-        await update.message.reply_text(
-            f"📈 <b>Your Statistics</b>\n\n"
-            f"• Total Reports: {user.get('reports', 0)}\n"
-            f"• Account: @{user.get('ig_username', '')}\n"
-            f"• Member since: {user.get('created_at', datetime.now()).strftime('%Y-%m-%d')}",
-            parse_mode='HTML'
-        )
-    
-    elif text == "👑 Admin Panel" and user_id == str(ADMIN_ID):
-        await update.message.reply_text(
-            STRINGS[lang]['admin_panel'],
-            reply_markup=get_admin_keyboard(),
-            parse_mode='HTML'
-        )
-        return ADMIN_PANEL
-    
-    return MAIN_MENU
-
-async def report_menu(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    text = update.message.text
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    
-    if text == "🏠 Main Menu":
-        await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(
-                ig_username=user.get('ig_username', ''),
-                reports=user.get('reports', 0)
-            ),
+            STRINGS[lang]['login_success'].format(username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
             parse_mode='HTML'
         )
         return MAIN_MENU
-    
-    await update.message.reply_text(
-        STRINGS[lang]['target_prompt'],
-        parse_mode='HTML'
-    )
-    return TARGET_USERNAME
+    except Exception as e:
+        print(f"⚠️ Error in get_ig_password handler: {e}")
+        lang = context.user_data.get('language', 'en')
+        await update.message.reply_text(STRINGS[lang]['db_error'], parse_mode='HTML')
+        return ConversationHandler.END
 
-async def get_target(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    target = update.message.text.strip()
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    
-    if not is_valid_username(target):
+async def main_menu(update: Update, context: CallbackContext) -> int:
+    try:
+        user_id = str(update.effective_user.id)
+        text = update.message.text
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
+        
+        if text == "⚔️ Report Account":
+            await update.message.reply_text(
+                STRINGS[lang]['report_menu'],
+                reply_markup=ReplyKeyboardMarkup([[KeyboardButton("🏠 Main Menu")]], resize_keyboard=True),
+                parse_mode='HTML'
+            )
+            return REPORT_MENU
+        
+        elif text == "👤 Profile":
+            if user:
+                await update.message.reply_text(
+                    STRINGS[lang]['main_menu'].format(
+                        ig_username=user.get('ig_username', ''),
+                        reports=user.get('reports', 0)
+                    ),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text("❌ User data not found")
+        
+        elif text == "📊 Stats":
+            if user:
+                await update.message.reply_text(
+                    f"📈 <b>Your Statistics</b>\n\n"
+                    f"• Total Reports: {user.get('reports', 0)}\n"
+                    f"• Account: @{user.get('ig_username', '')}\n"
+                    f"• Member since: {user.get('created_at', datetime.now()).strftime('%Y-%m-%d')}",
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text("❌ User data not found")
+        
+        elif text == "👑 Admin Panel" and user_id == str(ADMIN_ID):
+            await update.message.reply_text(
+                STRINGS[lang]['admin_panel'],
+                reply_markup=get_admin_keyboard(),
+                parse_mode='HTML'
+            )
+            return ADMIN_PANEL
+        
+        return MAIN_MENU
+    except Exception as e:
+        print(f"⚠️ Error in main_menu handler: {e}")
+        return MAIN_MENU
+
+async def report_menu(update: Update, context: CallbackContext) -> int:
+    try:
+        user_id = str(update.effective_user.id)
+        text = update.message.text
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
+        
+        if text == "🏠 Main Menu":
+            if user:
+                await update.message.reply_text(
+                    STRINGS[lang]['main_menu'].format(
+                        ig_username=user.get('ig_username', ''),
+                        reports=user.get('reports', 0)
+                    ),
+                    reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
+                    parse_mode='HTML'
+                )
+                return MAIN_MENU
+            else:
+                await update.message.reply_text("❌ User data not found")
+                return MAIN_MENU
+        
         await update.message.reply_text(
-            STRINGS[lang]['invalid_target'],
+            STRINGS[lang]['target_prompt'],
             parse_mode='HTML'
         )
         return TARGET_USERNAME
-    
-    context.user_data['target'] = target
-    await update.message.reply_text(
-        STRINGS[lang]['report_type'],
-        reply_markup=get_report_types_keyboard(),
-        parse_mode='HTML'
-    )
-    return REPORT_TYPE
+    except Exception as e:
+        print(f"⚠️ Error in report_menu handler: {e}")
+        return MAIN_MENU
+
+async def get_target(update: Update, context: CallbackContext) -> int:
+    try:
+        user_id = str(update.effective_user.id)
+        target = update.message.text.strip()
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
+        
+        if not is_valid_username(target):
+            await update.message.reply_text(
+                STRINGS[lang]['invalid_target'],
+                parse_mode='HTML'
+            )
+            return TARGET_USERNAME
+        
+        context.user_data['target'] = target
+        await update.message.reply_text(
+            STRINGS[lang]['report_type'],
+            reply_markup=get_report_types_keyboard(),
+            parse_mode='HTML'
+        )
+        return REPORT_TYPE
+    except Exception as e:
+        print(f"⚠️ Error in get_target handler: {e}")
+        return MAIN_MENU
 
 async def set_report_type(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    
-    report_type = query.data.split('_')[1]
-    context.user_data['report_type'] = report_type
-    user_id = str(query.from_user.id)
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    
-    await query.edit_message_text(
-        STRINGS[lang]['confirm_report'].format(
-            target=context.user_data['target'],
-            report_type=REPORT_TYPES[report_type]
-        ),
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🚀 START REPORTING", callback_data='start_report')],
-            [InlineKeyboardButton("❌ CANCEL", callback_data='cancel_report')]
-        ]),
-        parse_mode='HTML'
-    )
-    return REPORTING
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        report_type = query.data.split('_')[1]
+        context.user_data['report_type'] = report_type
+        user_id = str(query.from_user.id)
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
+        
+        await query.edit_message_text(
+            STRINGS[lang]['confirm_report'].format(
+                target=context.user_data['target'],
+                report_type=REPORT_TYPES[report_type]
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 START REPORTING", callback_data='start_report')],
+                [InlineKeyboardButton("❌ CANCEL", callback_data='cancel_report')]
+            ]),
+            parse_mode='HTML'
+        )
+        return REPORTING
+    except Exception as e:
+        print(f"⚠️ Error in set_report_type handler: {e}")
+        return MAIN_MENU
 
 async def start_reporting(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = str(query.from_user.id)
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    target = context.user_data['target']
-    report_type = context.user_data['report_type']
-    
-    # Start reporting task
-    context.user_data['report_count'] = 0
-    context.user_data['reporting'] = True
-    
-    task = asyncio.create_task(
-        send_reports(context, user_id, target, report_type, lang)
-    )
-    context.user_data['reporting_task'] = task
-    
-    await query.edit_message_text(
-        STRINGS[lang]['reporting_started'].format(target=target),
-        parse_mode='HTML'
-    )
-    
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="⚡ Reporting in progress...",
-        reply_markup=get_report_control_keyboard()
-    )
-    return REPORTING
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = str(query.from_user.id)
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
+        target = context.user_data['target']
+        report_type = context.user_data['report_type']
+        
+        # Start reporting task
+        context.user_data['report_count'] = 0
+        context.user_data['reporting'] = True
+        
+        task = asyncio.create_task(
+            send_reports(context, user_id, target, report_type, lang)
+        )
+        context.user_data['reporting_task'] = task
+        
+        await query.edit_message_text(
+            STRINGS[lang]['reporting_started'].format(target=target),
+            parse_mode='HTML'
+        )
+        
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="⚡ Reporting in progress...",
+            reply_markup=get_report_control_keyboard()
+        )
+        return REPORTING
+    except Exception as e:
+        print(f"⚠️ Error in start_reporting handler: {e}")
+        return MAIN_MENU
 
 async def stop_reporting(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    report_count = context.user_data.get('report_count', 0)
-    
-    # Stop reporting task
-    if 'reporting_task' in context.user_data:
-        context.user_data['reporting_task'].cancel()
-    
-    await update.message.reply_text(
-        STRINGS[lang]['report_stopped'].format(count=report_count),
-        reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
-        parse_mode='HTML'
-    )
-    return MAIN_MENU
+    try:
+        user_id = str(update.effective_user.id)
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
+        report_count = context.user_data.get('report_count', 0)
+        
+        # Stop reporting task
+        if 'reporting_task' in context.user_data:
+            context.user_data['reporting_task'].cancel()
+        
+        await update.message.reply_text(
+            STRINGS[lang]['report_stopped'].format(count=report_count),
+            reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
+            parse_mode='HTML'
+        )
+        return MAIN_MENU
+    except Exception as e:
+        print(f"⚠️ Error in stop_reporting handler: {e}")
+        return MAIN_MENU
 
 async def cancel_reporting(update: Update, context: CallbackContext) -> int:
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = str(query.from_user.id)
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    
-    await query.edit_message_text("❌ Reporting canceled")
-    await context.bot.send_message(
-        chat_id=user_id,
-        text=STRINGS[lang]['main_menu'].format(
-            ig_username=user.get('ig_username', ''),
-            reports=user.get('reports', 0)
-        ),
-        reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
-        parse_mode='HTML'
-    )
-    return MAIN_MENU
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = str(query.from_user.id)
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
+        
+        await query.edit_message_text("❌ Reporting canceled")
+        if user:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=STRINGS[lang]['main_menu'].format(
+                    ig_username=user.get('ig_username', ''),
+                    reports=user.get('reports', 0)
+                ),
+                reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
+                parse_mode='HTML'
+            )
+        return MAIN_MENU
+    except Exception as e:
+        print(f"⚠️ Error in cancel_reporting handler: {e}")
+        return MAIN_MENU
 
 async def send_reports(context: CallbackContext, user_id: str, target: str, report_type: str, lang: str):
     count = 0
@@ -485,97 +571,120 @@ async def send_reports(context: CallbackContext, user_id: str, target: str, repo
             
             # Send update every 3 reports
             if count % 3 == 0:
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=message,
-                    parse_mode='HTML'
-                )
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=message,
+                        parse_mode='HTML'
+                    )
+                except Exception as e:
+                    print(f"⚠️ Error sending report update: {e}")
             
             # Random delay between 1-3 seconds
             await asyncio.sleep(random.uniform(1.0, 3.0))
     except asyncio.CancelledError:
         pass
+    except Exception as e:
+        print(f"⚠️ Error in send_reports: {e}")
 
 async def admin_panel(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    text = update.message.text
-    user = get_user(user_id)
-    lang = user.get('language', 'en')
-    
-    if text == "🏠 Main Menu":
-        await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(
-                ig_username=user.get('ig_username', ''),
-                reports=user.get('reports', 0)
-            ),
-            reply_markup=get_main_keyboard(lang, is_admin=True),
-            parse_mode='HTML'
-        )
-        return MAIN_MENU
-    
-    elif text == "📊 User Stats":
-        db = get_db()
-        if not db:
-            await update.message.reply_text("⚠️ Database connection failed")
-            return ADMIN_PANEL
-            
-        total_users = db.users.count_documents({})
-        total_reports = db.users.aggregate([{
-            "$group": {"_id": None, "total": {"$sum": "$reports"}}
-        }]).next().get('total', 0)
+    try:
+        user_id = str(update.effective_user.id)
+        text = update.message.text
+        user = get_user(user_id)
+        lang = user.get('language', 'en') if user else 'en'
         
-        await update.message.reply_text(
-            f"📊 <b>Bot Statistics</b>\n\n"
-            f"• Total Users: {total_users}\n"
-            f"• Total Reports Sent: {total_reports}\n"
-            f"• Active Today: Calculating...",
-            parse_mode='HTML'
-        )
-    
-    elif text == "📢 Broadcast":
-        await update.message.reply_text("✉️ Enter broadcast message:")
-        return BROADCAST_MESSAGE
-    
-    return ADMIN_PANEL
+        if text == "🏠 Main Menu":
+            if user:
+                await update.message.reply_text(
+                    STRINGS[lang]['main_menu'].format(
+                        ig_username=user.get('ig_username', ''),
+                        reports=user.get('reports', 0)
+                    ),
+                    reply_markup=get_main_keyboard(lang, is_admin=True),
+                    parse_mode='HTML'
+                )
+                return MAIN_MENU
+        
+        elif text == "📊 User Stats":
+            db = get_db()
+            if db is None:
+                await update.message.reply_text(STRINGS[lang]['db_error'], parse_mode='HTML')
+                return ADMIN_PANEL
+                
+            try:
+                total_users = db.users.count_documents({})
+                total_reports_cursor = db.users.aggregate([{
+                    "$group": {"_id": None, "total": {"$sum": "$reports"}}
+                }])
+                total_reports = next(total_reports_cursor, {}).get('total', 0)
+                
+                await update.message.reply_text(
+                    f"📊 <b>Bot Statistics</b>\n\n"
+                    f"• Total Users: {total_users}\n"
+                    f"• Total Reports Sent: {total_reports}\n"
+                    f"• Active Today: Calculating...",
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                print(f"⚠️ Failed to get stats: {e}")
+                await update.message.reply_text("❌ Failed to retrieve statistics")
+        
+        elif text == "📢 Broadcast":
+            await update.message.reply_text("✉️ Enter broadcast message:")
+            return BROADCAST_MESSAGE
+        
+        return ADMIN_PANEL
+    except Exception as e:
+        print(f"⚠️ Error in admin_panel handler: {e}")
+        return ADMIN_PANEL
 
 async def broadcast_message(update: Update, context: CallbackContext) -> int:
-    user_id = str(update.effective_user.id)
-    message = update.message.text
-    db = get_db()
-    
-    if not db:
-        await update.message.reply_text("⚠️ Database connection failed")
-        return ADMIN_PANEL
+    try:
+        user_id = str(update.effective_user.id)
+        message = update.message.text
+        db = get_db()
         
-    users = db.users.find()
-    count = 0
-    
-    for user in users:
-        try:
-            await context.bot.send_message(
-                chat_id=user['user_id'],
-                text=f"📢 <b>Admin Broadcast</b>\n\n{message}",
-                parse_mode='HTML'
-            )
-            count += 1
-            await asyncio.sleep(0.1)  # Avoid rate limits
-        except Exception as e:
-            print(f"Failed to send to {user['user_id']}: {str(e)}")
-    
-    await update.message.reply_text(
-        STRINGS['en']['broadcast_sent'].format(count=count),
-        reply_markup=get_admin_keyboard(),
-        parse_mode='HTML'
-    )
-    return ADMIN_PANEL
+        if db is None:
+            await update.message.reply_text(STRINGS['en']['db_error'], parse_mode='HTML')
+            return ADMIN_PANEL
+            
+        users = db.users.find()
+        count = 0
+        
+        for user in users:
+            try:
+                await context.bot.send_message(
+                    chat_id=user['user_id'],
+                    text=f"📢 <b>Admin Broadcast</b>\n\n{message}",
+                    parse_mode='HTML'
+                )
+                count += 1
+                await asyncio.sleep(0.1)  # Avoid rate limits
+            except Exception as e:
+                print(f"Failed to send to {user['user_id']}: {str(e)}")
+        
+        await update.message.reply_text(
+            STRINGS['en']['broadcast_sent'].format(count=count),
+            reply_markup=get_admin_keyboard(),
+            parse_mode='HTML'
+        )
+        return ADMIN_PANEL
+    except Exception as e:
+        print(f"⚠️ Error in broadcast_message handler: {e}")
+        return ADMIN_PANEL
 
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation canceled")
     return ConversationHandler.END
 
+def create_application():
+    # Create application with conflict prevention settings
+    return ApplicationBuilder().token(BOT_TOKEN).build()
+
 def main():
     # Create application
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = create_application()
     
     # Conversation handler
     conv_handler = ConversationHandler(
@@ -602,19 +711,41 @@ def main():
     
     app.add_handler(conv_handler)
     
-    # Start the bot
+    # Start the bot with conflict prevention
     print("🚀 Bot is running...")
     app.run_polling(
-        drop_pending_updates=True,  # Prevents conflict errors
-        close_loop=False             # Avoids asyncio conflicts
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        timeout=20,
+        poll_interval=1.0
     )
 
 if __name__ == '__main__':
-    # Render deployment check
-    if os.environ.get('RENDER'):
-        print("🚦 Render environment detected")
-        print(f"🔌 Using PORT: {PORT}")
-        print("⏳ Preventing instance conflicts...")
-        time.sleep(random.uniform(1, 3))
-        
-    main()
+    max_retries = 5
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"🚦 Starting bot attempt {attempt+1}/{max_retries}")
+            
+            # Render deployment check
+            if os.environ.get('RENDER'):
+                print("🌐 Render environment detected")
+                print(f"🔌 Using PORT: {PORT}")
+                print("⏳ Preventing instance conflicts...")
+                time.sleep(random.uniform(1, 3))
+            
+            main()
+            break
+        except Conflict as e:
+            print(f"⚠️ Telegram conflict error: {e}")
+            if attempt < max_retries - 1:
+                wait = retry_delay * (2 ** attempt) + random.uniform(0, 1)
+                print(f"⏱️ Retrying in {wait:.1f} seconds...")
+                time.sleep(wait)
+            else:
+                print("❌ Max retries reached for conflict errors")
+                raise
+        except Exception as e:
+            print(f"❌ Critical error: {e}")
+            raise
