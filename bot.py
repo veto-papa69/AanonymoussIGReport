@@ -557,7 +557,7 @@ def get_report_keyboard(lang='en'):
     buttons = BUTTON_TEXTS[lang]
     return ReplyKeyboardMarkup([
         [KeyboardButton(buttons['start_new_report'])],
-        [KeyboardButton(buttons['home'])]
+        [KeyboardButton("⬅️ Back"), KeyboardButton(buttons['home'])]
     ], resize_keyboard=True)
 
 def get_admin_keyboard(lang='en'):
@@ -565,7 +565,7 @@ def get_admin_keyboard(lang='en'):
     return ReplyKeyboardMarkup([
         [KeyboardButton("📢 Broadcast"), KeyboardButton("👥 Users")],
         [KeyboardButton("📊 Statistics"), KeyboardButton("⚙️ Settings")],
-        [KeyboardButton(buttons['home'])]
+        [KeyboardButton("⬅️ Back"), KeyboardButton(buttons['home'])]
     ], resize_keyboard=True)
 
 def get_settings_keyboard(lang='en'):
@@ -573,7 +573,7 @@ def get_settings_keyboard(lang='en'):
     return ReplyKeyboardMarkup([
         [KeyboardButton(buttons['change_language']), KeyboardButton(buttons['notification_settings'])],
         [KeyboardButton(buttons['security_settings']), KeyboardButton(buttons['account_info'])],
-        [KeyboardButton(buttons['home'])]
+        [KeyboardButton("⬅️ Back"), KeyboardButton(buttons['home'])]
     ], resize_keyboard=True)
 
 def get_help_keyboard(lang='en'):
@@ -581,7 +581,7 @@ def get_help_keyboard(lang='en'):
     return ReplyKeyboardMarkup([
         [KeyboardButton(buttons['contact_support']), KeyboardButton(buttons['faq'])],
         [KeyboardButton(buttons['tutorial']), KeyboardButton(buttons['view_statistics'])],
-        [KeyboardButton(buttons['home'])]
+        [KeyboardButton("⬅️ Back"), KeyboardButton(buttons['home'])]
     ], resize_keyboard=True)
 
 def get_attack_keyboard(lang='en'):
@@ -889,6 +889,19 @@ async def handle_report_menu(update: Update, context: CallbackContext):
         )
         return USERNAME_INPUT
         
+    elif text == "⬅️ Back":
+        name = user_data.get('display_name', 'User')
+        reports = user_data.get('total_reports', 0)
+        ig_username = user_data.get('ig_username', 'Unknown')
+        is_admin_user = is_admin(user_id)
+        
+        await update.message.reply_text(
+            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            reply_markup=get_main_keyboard(lang, is_admin_user),
+            parse_mode='HTML'
+        )
+        return MAIN_MENU
+        
     elif text == buttons['home']:
         name = user_data.get('display_name', 'User')
         reports = user_data.get('total_reports', 0)
@@ -911,7 +924,20 @@ async def handle_settings_menu(update: Update, context: CallbackContext):
     text = update.message.text
     buttons = BUTTON_TEXTS[lang]
     
-    if text == buttons['home']:
+    if text == "⬅️ Back":
+        name = user_data.get('display_name', 'User')
+        reports = user_data.get('total_reports', 0)
+        ig_username = user_data.get('ig_username', 'Unknown')
+        is_admin_user = is_admin(user_id)
+        
+        await update.message.reply_text(
+            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            reply_markup=get_main_keyboard(lang, is_admin_user),
+            parse_mode='HTML'
+        )
+        return MAIN_MENU
+        
+    elif text == buttons['home']:
         name = user_data.get('display_name', 'User')
         reports = user_data.get('total_reports', 0)
         ig_username = user_data.get('ig_username', 'Unknown')
@@ -951,7 +977,20 @@ async def handle_help_menu(update: Update, context: CallbackContext):
     text = update.message.text
     buttons = BUTTON_TEXTS[lang]
     
-    if text == buttons['home']:
+    if text == "⬅️ Back":
+        name = user_data.get('display_name', 'User')
+        reports = user_data.get('total_reports', 0)
+        ig_username = user_data.get('ig_username', 'Unknown')
+        is_admin_user = is_admin(user_id)
+        
+        await update.message.reply_text(
+            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            reply_markup=get_main_keyboard(lang, is_admin_user),
+            parse_mode='HTML'
+        )
+        return MAIN_MENU
+        
+    elif text == buttons['home']:
         name = user_data.get('display_name', 'User')
         reports = user_data.get('total_reports', 0)
         ig_username = user_data.get('ig_username', 'Unknown')
@@ -1098,7 +1137,7 @@ async def handle_report_loop(update: Update, context: CallbackContext):
         # Start the infinite reporting loop
         await start_infinite_reporting(context, user_id, username, report_type, lang, session_id)
         
-    elif query.data == 'stop_report' or update.message and update.message.text == BUTTON_TEXTS[lang]['stop_attack']:
+    elif query.data == 'stop_report':
         active_reports[user_id] = False
         session_id = context.user_data.get('session_id')
         total_strikes = context.user_data.get('strike_count', 0)
@@ -1299,7 +1338,19 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
     if not is_admin(user_id):
         return MAIN_MENU
     
-    if text == "📢 Broadcast":
+    if text == "⬅️ Back":
+        name = user_data.get('display_name', 'Admin')
+        reports = user_data.get('total_reports', 0)
+        ig_username = user_data.get('ig_username', 'Unknown')
+        
+        await update.message.reply_text(
+            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            reply_markup=get_main_keyboard(lang, True),
+            parse_mode='HTML'
+        )
+        return MAIN_MENU
+        
+    elif text == "📢 Broadcast":
         await update.message.reply_text(
             STRINGS[lang]['broadcast_prompt'],
             parse_mode='HTML'
@@ -1474,7 +1525,9 @@ def main():
                 IMPERSONATION_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_impersonation_url)],
                 REPORT_LOOP: [
                     CallbackQueryHandler(handle_report_loop),
-                    MessageHandler(filters.Regex(r'⏹️ Stop Attack|⏹️ अटैक बंद करें'), handle_stop_attack)
+                    MessageHandler(filters.Regex(r'⏹️ Stop Attack|⏹️ अटैक बंद करें'), handle_stop_attack),
+                    MessageHandler(filters.Regex(r'⬅️ Back'), handle_stop_attack),
+                    MessageHandler(filters.Regex(r'🏠 Home|🏠 होम'), handle_stop_attack)
                 ],
                 ADMIN_PANEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_buttons)],
                 BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)],
