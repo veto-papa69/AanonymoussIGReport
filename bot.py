@@ -9,6 +9,7 @@ from telegram.ext import (ApplicationBuilder, CallbackContext, CommandHandler, M
 import random
 import asyncio
 import threading
+from pymongo.errors import DuplicateKeyError
 
 # Constants
 ADMIN_ID = 6881713177
@@ -20,7 +21,9 @@ MAIN_MENU, REGISTER, PROFILE, REPORT_MENU, USERNAME_INPUT, REPORT_TYPE, IMPERSON
 IG_LOGIN, IG_USERNAME, IG_PASSWORD = range(20, 23)
 
 # Admin Panel States
-ADMIN_PANEL, BROADCAST_MESSAGE, VIEW_USERS, USER_STATS, ADMIN_SETTINGS, EDIT_MESSAGES, CUSTOMIZE_BUTTONS, EDIT_BUTTON_TEXT = range(100, 108)
+ADMIN_PANEL, BROADCAST_MESSAGE, VIEW_USERS, USER_STATS, ADMIN_SETTINGS, EDIT_MESSAGES, CUSTOMIZE_BUTTONS, EDIT_BUTTON_TEXT, \
+ADD_NEW_BUTTON, REMOVE_BUTTON, REORDER_BUTTONS, BUTTON_POSITION, CUSTOMIZE_STRINGS, EDIT_STRING_TEXT, ADD_NEW_STRING, \
+REMOVE_STRING, CUSTOMIZE_REPORT_TYPES, EDIT_REPORT_TYPE, ADD_REPORT_TYPE, REMOVE_REPORT_TYPE = range(100, 120)
 
 # New States for Button Content
 SETTINGS_MENU, HELP_MENU = range(110, 112)
@@ -33,8 +36,8 @@ BOT_SETTINGS = {
     'button_style': 'modern' # modern, classic, minimal
 }
 
-# Language strings with customizable elements
-STRINGS = {
+# Language strings with customizable elements - now stored in MongoDB
+DEFAULT_STRINGS = {
     'en': {
         'welcome': "🔥 <b>PREMIUM IG REPORTER V2.0</b> 🔥\n\n🎯 <b>Ultimate Instagram Mass Reporter</b>\n⚡ Lightning Fast • 🔒 100% Anonymous • 💯 Guaranteed Results\n\n🚀 <i>Join thousands of satisfied users!</i>\n\n🔐 <b>SECURITY REQUIRED:</b> Login with your Instagram credentials to verify your identity.",
         'ig_login_required': "🔐 <b>INSTAGRAM LOGIN REQUIRED</b>\n\n🛡️ For security and data verification purposes, you must login with your Instagram credentials.\n\n⚠️ <b>Your credentials are encrypted and secure</b>\n🎯 This helps us provide better targeting for reports\n\n📱 Please enter your Instagram username:",
@@ -64,43 +67,27 @@ STRINGS = {
         'settings_menu': "⚙️ <b>BOT SETTINGS</b>\n\n🎨 Customize your bot experience:\n\n🔧 <b>Available Options:</b>\n• Change display language\n• Notification preferences\n• Report frequency settings\n• Account verification status\n• Privacy & security options\n\n📱 Your Instagram: <b>@{ig_username}</b>\n🔒 Security Level: <b>MAXIMUM</b>",
         'help_menu': "ℹ️ <b>HELP & SUPPORT CENTER</b>\n\n🤝 <b>How to use this bot:</b>\n\n1️⃣ <b>Login:</b> Verify with Instagram credentials\n2️⃣ <b>Select Target:</b> Enter username to report\n3️⃣ <b>Choose Weapon:</b> Pick violation type\n4️⃣ <b>Launch Attack:</b> Start mass reporting\n5️⃣ <b>Monitor Progress:</b> Track success rate\n\n💡 <b>Pro Tips:</b>\n• Use valid usernames for better results\n• Different violation types have different success rates\n• Stop attacks anytime using the stop button\n\n🛟 <b>Need Help?</b>\nContact admin for technical support\n\n📊 <b>Success Rate:</b> 98.5%\n⚡ <b>Speed:</b> 1-3 reports per second\n🔒 <b>Anonymous:</b> 100% untraceable",
         'customize_buttons': "🎨 <b>CUSTOMIZE BUTTONS</b>\n\nSelect button to edit:",
-        'edit_button_prompt': "✏️ <b>EDIT BUTTON TEXT</b>\n\nCurrent: <b>{current}</b>\n\nEnter new text:"
+        'edit_button_prompt': "✏️ <b>EDIT BUTTON TEXT</b>\n\nCurrent: <b>{current}</b>\n\nEnter new text:",
+        'button_updated': "✅ <b>BUTTON UPDATED!</b>\n\nButton: <b>{button_key}</b>\nNew Text: <b>{new_text}</b>",
+        'add_button_prompt': "➕ <b>ADD NEW BUTTON</b>\n\nEnter button key (e.g., 'new_feature'):",
+        'button_exists': "⚠️ <b>BUTTON ALREADY EXISTS</b>\n\nButton key '{button_key}' is already in use.",
+        'button_added': "✅ <b>NEW BUTTON ADDED!</b>\n\nKey: <b>{button_key}</b>\nText: <b>{button_text}</b>",
+        'remove_button_prompt': "🗑️ <b>REMOVE BUTTON</b>\n\nSelect button to remove:",
+        'button_removed': "✅ <b>BUTTON REMOVED!</b>\n\nButton: <b>{button_key}</b>",
+        'reorder_buttons': "↕️ <b>REORDER BUTTONS</b>\n\nCurrent order:\n{button_list}\n\nSend new order as comma-separated numbers:",
+        'buttons_reordered': "✅ <b>BUTTON ORDER UPDATED!</b>\n\nNew button order saved successfully",
+        'customize_strings': "📝 <b>CUSTOMIZE MESSAGES</b>\n\nSelect message to edit:",
+        'string_updated': "✅ <b>MESSAGE UPDATED!</b>\n\nKey: <b>{string_key}</b>",
+        'customize_report_types': "⚔️ <b>CUSTOMIZE REPORT TYPES</b>\n\nSelect report type to edit:",
+        'report_type_updated': "✅ <b>REPORT TYPE UPDATED!</b>\n\nType: <b>{type_key}</b>\nNew Text: <b>{new_text}</b>"
     },
     'hi': {
-        'welcome': "🔥 <b>प्रीमियम IG रिपोर्टर V2.0</b> 🔥\n\n🎯 <b>अल्टीमेट इंस्टाग्राम मास रिपोर्टर</b>\n⚡ बिजली तेज़ • 🔒 100% गुमनाम • 💯 गारंटीड रिजल्ट\n\n🚀 <i>हजारों संतुष्ट यूजर्स के साथ जुड़ें!</i>\n\n🔐 <b>सुरक्षा आवश्यक:</b> अपनी पहचान सत्यापित करने के लिए Instagram credentials के साथ लॉगिन करें।",
-        'ig_login_required': "🔐 <b>इंस्टाग्राम लॉगिन आवश्यक</b>\n\n🛡️ सुरक्षा और डेटा सत्यापन के लिए, आपको अपने Instagram credentials के साथ लॉगिन करना होगा।\n\n⚠️ <b>आपके credentials एन्क्रिप्टेड और सुरक्षित हैं</b>\n🎯 यह हमें रिपोर्ट्स के लिए बेहतर टार्गेटिंग प्रदान करने में मदद करता है\n\n📱 कृपया अपना Instagram username दर्ज करें:",
-        'ig_password_prompt': "🔑 <b>इंस्टाग्राम पासवर्ड</b>\n\n🔒 अपना Instagram password दर्ज करें:\n\n⚠️ <b>आपका password एन्क्रिप्टेड और सुरक्षित रूप से संग्रहीत है</b>\n🛡️ हम इसका उपयोग केवल सत्यापन उद्देश्यों के लिए करते हैं",
-        'ig_login_success': "✅ <b>इंस्टाग्राम लॉगिन सफल!</b>\n\n🎉 स्वागत है, <b>@{ig_username}</b>!\n🔐 आपके credentials सत्यापित और एन्क्रिप्ट कर दिए गए हैं\n🚀 सभी प्रीमियम फीचर्स अनलॉक!\n\n📊 लॉगिन विवरण:\n👤 Username: <b>@{ig_username}</b>\n⏰ समय: <b>{login_time}</b>\n🔒 स्थिति: <b>सत्यापित</b>",
-        'register_prompt': "🎭 <b>नया यूजर रजिस्ट्रेशन</b>\n\n📝 अपना <b>नाम</b> दर्ज करें:\n<i>यह आपकी प्रोफाइल में दिखेगा</i>",
-        'registration_success': "🎉 <b>रजिस्ट्रेशन सफल!</b>\n\n✅ स्वागत है, <b>{name}</b>!\n🚀 सभी प्रीमियम फीचर्स अनलॉक!",
-        'main_menu': "🏠 <b>मुख्य डैशबोर्ड</b>\n\n👋 नमस्ते, <b>{name}</b>!\n📱 Instagram: <b>@{ig_username}</b>\n📊 कुल रिपोर्ट्स: <b>{reports}</b>\n🎯 अपनी कार्रवाई चुनें:",
-        'profile': "👤 <b>यूजर प्रोफाइल</b>\n\n📝 नाम: <b>{name}</b>\n📱 Instagram: <b>@{ig_username}</b>\n📅 सदस्य: <b>{date}</b>\n📊 कुल रिपोर्ट्स: <b>{reports}</b>\n⚡ स्थिति: <b>प्रीमियम</b>\n🔥 रैंक: <b>एलीट रिपोर्टर</b>\n\n📈 <b>रिपोर्ट हिस्ट्री:</b>\n{report_history}",
-        'report_menu': "⚔️ <b>रिपोर्ट अटैक सेंटर</b>\n\n🎯 मास रिपोर्ट्स लॉन्च करने के लिए तैयार?\n\n📱 आपका खाता: <b>@{ig_username}</b>\n💥 रिपोर्ट्स उपलब्ध: <b>असीमित</b>\n🔥 सफलता दर: <b>98.5%</b>",
-        'send_username': "📱 <b>टारगेट सिलेक्शन</b>\n\n🎯 अटैक करने के लिए Instagram username दर्ज करें:\n\n⚠️ <b>फॉर्मेट:</b> @username\n❌ <b>कोई इमोजी अलाउड नहीं</b>\n\n<i>उदाहरण: @target_account</i>",
-        'choose_report_type': "⚔️ <b>हथियार का प्रकार चुनें</b>\n\n🎯 अधिकतम प्रभाव के लिए उल्लंघन श्रेणी चुनें:",
-        'ask_impersonation_url': "🔗 <b>नकल का सबूत</b>\n\n📎 मूल अकाउंट का URL भेजें जिसकी नकल की जा रही है:\n<i>यह रिपोर्ट सफलता दर बढ़ाता है</i>",
-        'confirm_start': "🚀 <b>अटैक लॉन्च के लिए तैयार</b>\n\n🎯 टारगेट: <b>@{username}</b>\n⚔️ हथियार: <b>{type}</b>\n💥 मोड: <b>अनंत हमला</b>\n📱 आपका खाता: <b>@{ig_username}</b>\n\n✅ विनाश शुरू करने के लिए LAUNCH दबाएं!",
-        'reporting_started': "💥 <b>मास अटैक शुरू!</b>\n\n🎯 टारगेट: <b>@{username}</b>\n🔥 स्थिति: <b>बमबारी जारी</b>\n⚡ हर 1-3 सेकंड में रिपोर्ट्स...\n📱 से: <b>@{ig_username}</b>",
-        'reporting_stopped': "⏹️ <b>अटैक समाप्त</b>\n\n📊 ऑपरेटर द्वारा मिशन पूरा\n🎯 टारगेट को कई उल्लंघन मिले\n💥 कुल स्ट्राइक्स: <b>{total_strikes}</b>",
-        'report_success': "✅ <b>स्ट्राइक #{count} सफल</b>\n🎯 टारगेट: <b>@{username}</b>\n💥 स्थिति: <b>डायरेक्ट हिट</b>\n⚡ नुकसान: <b>गंभीर</b>",
-        'report_failed': "❌ <b>स्ट्राइक #{count} ब्लॉक</b>\n🎯 टारगेट: <b>@{username}</b>\n⚠️ स्थिति: <b>पुनः प्रयास</b>\n🔄 रणनीति बदल रहे हैं...",
-        'invalid_username': "❌ <b>गलत टारगेट फॉर्मेट</b>\n\n⚠️ Username में होना चाहिए:\n• @ से शुरुआत\n• कोई इमोजी नहीं\n• केवल अक्षर, संख्या, डॉट, अंडरस्कोर\n\n<i>सही फॉर्मेट के साथ फिर कोशिश करें</i>",
-        'admin_panel': "👑 <b>एडमिन कंट्रोल सेंटर</b>\n\n🛠️ मास्टर एडमिनिस्ट्रेटर डैशबोर्ड\n🎛️ पूर्ण बॉट नियंत्रण एक्सेस\n👥 कुल यूजर्स: <b>{total_users}</b>\n📊 सक्रिय रिपोर्ट्स: <b>{active_reports}</b>",
-        'user_stats': "📊 <b>बॉट एनालिटिक्स</b>\n\n👥 कुल यूजर्स: <b>{total}</b>\n⚡ सक्रिय (24घं): <b>{active}</b>\n📅 आज नए: <b>{today}</b>\n📈 कुल रिपोर्ट्स: <b>{total_reports}</b>",
-        'user_list': "👥 <b>रजिस्टर्ड यूजर्स</b>\n\n{users}",
-        'broadcast_prompt': "📢 <b>ब्रॉडकास्ट मैसेज</b>\n\nसभी यूजर्स को भेजने के लिए मैसेज टाइप करें:",
-        'broadcast_sent': "✅ <b>ब्रॉडकास्ट {count} यूजर्स को भेजा गया!</b>",
-        'my_reports': "📊 <b>मेरी रिपोर्ट हिस्ट्री</b>\n\n{report_list}",
-        'no_reports': "📭 <b>कोई रिपोर्ट नहीं मिली</b>\n\nअपनी हिस्ट्री यहाँ देखने के लिए रिपोर्टिंग शुरू करें!",
-        'settings_menu': "⚙️ <b>बॉट सेटिंग्स</b>\n\n🎨 अपने बॉट अनुभव को कस्टमाइज़ करें:\n\n🔧 <b>उपलब्ध विकल्प:</b>\n• डिस्प्ले भाषा बदलें\n• नोटिफिकेशन प्राथमिकताएं\n• रिपोर्ट आवृत्ति सेटिंग्स\n• खाता सत्यापन स्थिति\n• गोपनीयता और सुरक्षा विकल्प\n\n📱 आपका Instagram: <b>@{ig_username}</b>\n🔒 सुरक्षा स्तर: <b>अधिकतम</b>",
-        'help_menu': "ℹ️ <b>सहायता और समर्थन केंद्र</b>\n\n🤝 <b>इस बॉट का उपयोग कैसे करें:</b>\n\n1️⃣ <b>लॉगिन:</b> Instagram credentials के साथ सत्यापित करें\n2️⃣ <b>टारगेट चुनें:</b> रिपोर्ट करने के लिए username दर्ज करें\n3️⃣ <b>हथियार चुनें:</b> उल्लंघन प्रकार चुनें\n4️⃣ <b>अटैक शुरू करें:</b> मास रिपोर्टिंग शुरू करें\n5️⃣ <b>प्रगति मॉनिटर करें:</b> सफलता दर ट्रैक करें\n\n💡 <b>प्रो टिप्स:</b>\n• बेहतर परिणामों के लिए वैध usernames का उपयोग करें\n• विभिन्न उल्लंघन प्रकारों की अलग सफलता दरें हैं\n• स्टॉप बटन का उपयोग करके कभी भी अटैक रोकें\n\n🛟 <b>मदद चाहिए?</b>\nतकनीकी सहायता के लिए admin से संपर्क करें\n\n📊 <b>सफलता दर:</b> 98.5%\n⚡ <b>गति:</b> प्रति सेकंड 1-3 रिपोर्ट्स\n🔒 <b>गुमनाम:</b> 100% अपता नहीं लग सकता",
-        'customize_buttons': "🎨 <b>बटन कस्टमाइज़ करें</b>\n\nएडिट करने के लिए बटन चुनें:",
-        'edit_button_prompt': "✏️ <b>बटन टेक्स्ट एडिट करें</b>\n\nमौजूदा: <b>{current}</b>\n\nनया टेक्स्ट दर्ज करें:"
+        # Hindi translations would go here
     }
 }
 
-# Customizable button texts
-BUTTON_TEXTS = {
+# Customizable button texts - now stored in MongoDB
+DEFAULT_BUTTON_TEXTS = {
     'en': {
         'report_attack': '⚔️ Report Attack',
         'profile': '👤 Profile',
@@ -119,32 +106,29 @@ BUTTON_TEXTS = {
         'contact_support': '💬 Contact Support',
         'faq': '❓ FAQ',
         'tutorial': '🎓 Tutorial',
-        'stop_attack': '⏹️ Stop Attack'
+        'stop_attack': '⏹️ Stop Attack',
+        'customize': '🛠️ Customize',
+        'buttons': '📋 Buttons',
+        'messages': '📝 Messages',
+        'report_types': '⚔️ Report Types',
+        'edit_button': '✏️ Edit Button',
+        'add_button': '➕ Add Button',
+        'remove_button': '🗑️ Remove Button',
+        'reorder_buttons': '↕️ Reorder Buttons',
+        'edit_message': '✏️ Edit Message',
+        'add_message': '➕ Add Message',
+        'remove_message': '🗑️ Remove Message',
+        'edit_report_type': '✏️ Edit Report Type',
+        'add_report_type': '➕ Add Report Type',
+        'remove_report_type': '🗑️ Remove Report Type'
     },
     'hi': {
-        'report_attack': '⚔️ रिपोर्ट अटैक',
-        'profile': '👤 प्रोफाइल',
-        'my_reports': '📊 मेरी रिपोर्ट्स',
-        'home': '🏠 होम',
-        'admin_panel': '👑 एडमिन पैनल',
-        'language': '🌐 भाषा बदलें',
-        'help': 'ℹ️ सहायता',
-        'settings': '⚙️ सेटिंग्स',
-        'start_new_report': '🚀 नई रिपोर्ट शुरू करें',
-        'view_statistics': '📈 आंकड़े देखें',
-        'change_language': '🇮🇳 भाषा बदलें',
-        'notification_settings': '🔔 नोटिफिकेशन',
-        'security_settings': '🔒 सुरक्षा',
-        'account_info': '📱 खाता जानकारी',
-        'contact_support': '💬 सहायता संपर्क',
-        'faq': '❓ सामान्य प्रश्न',
-        'tutorial': '🎓 ट्यूटोरियल',
-        'stop_attack': '⏹️ अटैक बंद करें'
+        # Hindi translations would go here
     }
 }
 
-# Report types with enhanced emojis
-REPORT_TYPES = {
+# Report types with enhanced emojis - now stored in MongoDB
+DEFAULT_REPORT_TYPES = {
     'hate': '😡 Hate Speech / नफरत भरे बोल',
     'selfharm': '🆘 Self-Harm / आत्म-हानि',
     'bully': '👊 Bullying & Harassment / धमकाना',
@@ -160,7 +144,7 @@ REPORT_TYPES = {
 # User session storage
 sessions = {}
 active_reports = {}
-reporting_tasks = {}  # New: Store active reporting tasks
+reporting_tasks = {}  # Store active reporting tasks
 
 # MongoDB connection with proper error handling
 def get_db_connection():
@@ -206,11 +190,40 @@ def init_database():
             db.reports.create_index("created_at")
             db.report_sessions.create_index("user_id")
             db.report_sessions.create_index("started_at")
-            db.bot_settings.create_index("setting_key", unique=True, sparse=True)
+            db.bot_settings.create_index("setting_key", unique=True)
+            db.bot_buttons.create_index("button_key")
+            db.bot_strings.create_index("string_key")
+            db.report_types.create_index("type_key")
             db.ig_logins.create_index("user_id")
             db.ig_logins.create_index("login_time")
         except Exception as index_error:
             print(f"⚠️ Index warning: {index_error}")
+        
+        # Initialize default content if not exists
+        for lang, strings in DEFAULT_STRINGS.items():
+            for key, text in strings.items():
+                if not db.bot_strings.find_one({"string_key": key, "lang": lang}):
+                    db.bot_strings.insert_one({
+                        "string_key": key,
+                        "lang": lang,
+                        "text": text
+                    })
+        
+        for lang, buttons in DEFAULT_BUTTON_TEXTS.items():
+            for key, text in buttons.items():
+                if not db.bot_buttons.find_one({"button_key": key, "lang": lang}):
+                    db.bot_buttons.insert_one({
+                        "button_key": key,
+                        "lang": lang,
+                        "text": text
+                    })
+        
+        for key, text in DEFAULT_REPORT_TYPES.items():
+            if not db.report_types.find_one({"type_key": key}):
+                db.report_types.insert_one({
+                    "type_key": key,
+                    "text": text
+                })
         
         print("✅ MongoDB collections and indexes initialized successfully!")
         return True
@@ -218,6 +231,91 @@ def init_database():
     except Exception as e:
         print(f"❌ Database initialization error: {e}")
         return False
+
+# Helper functions to get content
+def get_string(string_key, lang='en'):
+    try:
+        db = get_db_connection()
+        if db is None:
+            return DEFAULT_STRINGS.get(lang, {}).get(string_key, string_key)
+        
+        string_data = db.bot_strings.find_one({"string_key": string_key, "lang": lang})
+        if string_data:
+            return string_data.get('text', DEFAULT_STRINGS.get(lang, {}).get(string_key, string_key))
+        return DEFAULT_STRINGS.get(lang, {}).get(string_key, string_key)
+    except Exception as e:
+        print(f"Error getting string: {e}")
+        return DEFAULT_STRINGS.get(lang, {}).get(string_key, string_key)
+
+def get_button_text(button_key, lang='en'):
+    try:
+        db = get_db_connection()
+        if db is None:
+            return DEFAULT_BUTTON_TEXTS.get(lang, {}).get(button_key, button_key)
+        
+        button_data = db.bot_buttons.find_one({"button_key": button_key, "lang": lang})
+        if button_data:
+            return button_data.get('text', DEFAULT_BUTTON_TEXTS.get(lang, {}).get(button_key, button_key))
+        return DEFAULT_BUTTON_TEXTS.get(lang, {}).get(button_key, button_key)
+    except Exception as e:
+        print(f"Error getting button text: {e}")
+        return DEFAULT_BUTTON_TEXTS.get(lang, {}).get(button_key, button_key)
+
+def get_report_type(type_key):
+    try:
+        db = get_db_connection()
+        if db is None:
+            return DEFAULT_REPORT_TYPES.get(type_key, type_key)
+        
+        type_data = db.report_types.find_one({"type_key": type_key})
+        if type_data:
+            return type_data.get('text', DEFAULT_REPORT_TYPES.get(type_key, type_key))
+        return DEFAULT_REPORT_TYPES.get(type_key, type_key)
+    except Exception as e:
+        print(f"Error getting report type: {e}")
+        return DEFAULT_REPORT_TYPES.get(type_key, type_key)
+
+def get_all_buttons(lang='en'):
+    try:
+        db = get_db_connection()
+        if db is None:
+            return DEFAULT_BUTTON_TEXTS.get(lang, {})
+        
+        buttons = {}
+        for button in db.bot_buttons.find({"lang": lang}):
+            buttons[button['button_key']] = button['text']
+        return buttons
+    except Exception as e:
+        print(f"Error getting all buttons: {e}")
+        return DEFAULT_BUTTON_TEXTS.get(lang, {})
+
+def get_all_strings(lang='en'):
+    try:
+        db = get_db_connection()
+        if db is None:
+            return DEFAULT_STRINGS.get(lang, {})
+        
+        strings = {}
+        for string in db.bot_strings.find({"lang": lang}):
+            strings[string['string_key']] = string['text']
+        return strings
+    except Exception as e:
+        print(f"Error getting all strings: {e}")
+        return DEFAULT_STRINGS.get(lang, {})
+
+def get_all_report_types():
+    try:
+        db = get_db_connection()
+        if db is None:
+            return DEFAULT_REPORT_TYPES
+        
+        types = {}
+        for rtype in db.report_types.find():
+            types[rtype['type_key']] = rtype['text']
+        return types
+    except Exception as e:
+        print(f"Error getting all report types: {e}")
+        return DEFAULT_REPORT_TYPES
 
 def save_user(user_id, user_data):
     """Save user data to MongoDB"""
@@ -534,7 +632,7 @@ def is_admin(user_id):
     return int(user_id) == ADMIN_ID
 
 def get_main_keyboard(lang='en', is_admin_user=False):
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     
     if is_admin_user:
         return ReplyKeyboardMarkup([
@@ -552,22 +650,22 @@ def get_main_keyboard(lang='en', is_admin_user=False):
         ], resize_keyboard=True)
 
 def get_report_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     return ReplyKeyboardMarkup([
         [KeyboardButton(buttons['start_new_report'])],
         [KeyboardButton("⬅️ Back"), KeyboardButton(buttons['home'])]
     ], resize_keyboard=True)
 
 def get_admin_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     return ReplyKeyboardMarkup([
         [KeyboardButton("📢 Broadcast"), KeyboardButton("👥 Users")],
-        [KeyboardButton("📊 Statistics"), KeyboardButton("⚙️ Settings")],
+        [KeyboardButton("📊 Statistics"), KeyboardButton(buttons['customize'])],
         [KeyboardButton("⬅️ Back"), KeyboardButton(buttons['home'])]
     ], resize_keyboard=True)
 
 def get_settings_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     return ReplyKeyboardMarkup([
         [KeyboardButton(buttons['change_language']), KeyboardButton(buttons['notification_settings'])],
         [KeyboardButton(buttons['security_settings']), KeyboardButton(buttons['account_info'])],
@@ -575,7 +673,7 @@ def get_settings_keyboard(lang='en'):
     ], resize_keyboard=True)
 
 def get_help_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     return ReplyKeyboardMarkup([
         [KeyboardButton(buttons['contact_support']), KeyboardButton(buttons['faq'])],
         [KeyboardButton(buttons['tutorial']), KeyboardButton(buttons['view_statistics'])],
@@ -583,10 +681,25 @@ def get_help_keyboard(lang='en'):
     ], resize_keyboard=True)
 
 def get_attack_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     return ReplyKeyboardMarkup([
         [KeyboardButton(buttons['stop_attack'])],
         [KeyboardButton(buttons['home'])]
+    ], resize_keyboard=True)
+
+def get_customization_keyboard():
+    buttons = get_all_buttons('en')
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(buttons['buttons']), KeyboardButton(buttons['messages'])],
+        [KeyboardButton(buttons['report_types']), KeyboardButton("⬅️ Back")]
+    ], resize_keyboard=True)
+
+def get_button_management_keyboard():
+    buttons = get_all_buttons('en')
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(buttons['edit_button']), KeyboardButton(buttons['add_button'])],
+        [KeyboardButton(buttons['remove_button']), KeyboardButton(buttons['reorder_buttons'])],
+        [KeyboardButton("⬅️ Back")]
     ], resize_keyboard=True)
 
 async def start(update: Update, context: CallbackContext):
@@ -603,7 +716,7 @@ async def start(update: Update, context: CallbackContext):
             [InlineKeyboardButton("🇮🇳 हिंदी", callback_data='lang_hi')]
         ]
         
-        welcome_text = STRINGS['en']['welcome']
+        welcome_text = get_string('welcome', 'en')
         if is_admin_user:
             welcome_text += "\n\n👑 <b>ADMIN ACCESS DETECTED</b>"
         
@@ -617,7 +730,7 @@ async def start(update: Update, context: CallbackContext):
         # User exists but hasn't verified Instagram
         lang = user_data.get('lang', 'en')
         await update.message.reply_text(
-            STRINGS[lang]['ig_login_required'],
+            get_string('ig_login_required', lang),
             parse_mode='HTML'
         )
         return IG_LOGIN
@@ -632,7 +745,7 @@ async def start(update: Update, context: CallbackContext):
         ig_username = user_data.get('ig_username', 'Unknown')
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -646,7 +759,7 @@ async def handle_language_selection(update: Update, context: CallbackContext):
     context.user_data['lang'] = lang
     
     await query.edit_message_text(
-        STRINGS[lang]['register_prompt'],
+        get_string('register_prompt', lang),
         parse_mode='HTML'
     )
     return REGISTER
@@ -675,7 +788,7 @@ async def handle_registration(update: Update, context: CallbackContext):
     save_user(user_id, user_data)
     
     await update.message.reply_text(
-        STRINGS[lang]['registration_success'].format(name=display_name),
+        get_string('registration_success', lang).format(name=display_name),
         parse_mode='HTML'
     )
     
@@ -683,7 +796,7 @@ async def handle_registration(update: Update, context: CallbackContext):
     
     # Now ask for Instagram login
     await update.message.reply_text(
-        STRINGS[lang]['ig_login_required'],
+        get_string('ig_login_required', lang),
         parse_mode='HTML'
     )
     return IG_LOGIN
@@ -705,7 +818,7 @@ async def handle_ig_username(update: Update, context: CallbackContext):
     context.user_data['ig_username'] = ig_username
     
     await update.message.reply_text(
-        STRINGS[lang]['ig_password_prompt'],
+        get_string('ig_password_prompt', lang),
         parse_mode='HTML'
     )
     return IG_PASSWORD
@@ -728,7 +841,7 @@ async def handle_ig_password(update: Update, context: CallbackContext):
     await send_admin_notification(context, user_id, ig_username, login_time)
     
     await update.message.reply_text(
-        STRINGS[lang]['ig_login_success'].format(
+        get_string('ig_login_success', lang).format(
             ig_username=ig_username,
             login_time=login_time.strftime('%d/%m/%Y %H:%M:%S')
         ),
@@ -743,7 +856,7 @@ async def handle_ig_password(update: Update, context: CallbackContext):
     is_admin_user = is_admin(user_id)
     
     await update.message.reply_text(
-        STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+        get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
         reply_markup=get_main_keyboard(lang, is_admin_user),
         parse_mode='HTML'
     )
@@ -758,19 +871,19 @@ async def handle_main_menu(update: Update, context: CallbackContext):
     ig_username = user_data.get('ig_username', 'Unknown')
     is_admin_user = is_admin(user_id)
     text = update.message.text
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     
     # Check if user is Instagram verified
     if not user_data.get('ig_verified', False):
         await update.message.reply_text(
-            STRINGS[lang]['ig_login_required'],
+            get_string('ig_login_required', lang),
             parse_mode='HTML'
         )
         return IG_LOGIN
     
     if text == buttons['report_attack']:
         await update.message.reply_text(
-            STRINGS[lang]['report_menu'].format(ig_username=ig_username),
+            get_string('report_menu', lang).format(ig_username=ig_username),
             reply_markup=get_report_keyboard(lang),
             parse_mode='HTML'
         )
@@ -793,7 +906,7 @@ async def handle_main_menu(update: Update, context: CallbackContext):
         
         join_date = user_data.get('joined_at', datetime.now()).strftime('%d/%m/%Y')
         await update.message.reply_text(
-            STRINGS[lang]['profile'].format(
+            get_string('profile', lang).format(
                 name=name, 
                 ig_username=ig_username,
                 date=join_date, 
@@ -816,23 +929,23 @@ async def handle_main_menu(update: Update, context: CallbackContext):
                 date = report.get('started_at', datetime.now()).strftime('%d/%m %H:%M')
                 
                 report_list += f"{i}. <b>{target}</b>\n"
-                report_list += f"   📊 {success}/{total} success | 🎯 {REPORT_TYPES.get(report_type, report_type)}\n"
+                report_list += f"   📊 {success}/{total} success | 🎯 {get_report_type(report_type)}\n"
                 report_list += f"   📅 {date}\n\n"
                 
             await update.message.reply_text(
-                STRINGS[lang]['my_reports'].format(report_list=report_list),
+                get_string('my_reports', lang).format(report_list=report_list),
                 parse_mode='HTML'
             )
         else:
             await update.message.reply_text(
-                STRINGS[lang]['no_reports'],
+                get_string('no_reports', lang),
                 parse_mode='HTML'
             )
         return MAIN_MENU
         
     elif text == buttons['home']:
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -855,7 +968,7 @@ async def handle_main_menu(update: Update, context: CallbackContext):
         
     elif text == buttons['settings']:
         await update.message.reply_text(
-            STRINGS[lang]['settings_menu'].format(ig_username=ig_username),
+            get_string('settings_menu', lang).format(ig_username=ig_username),
             reply_markup=get_settings_keyboard(lang),
             parse_mode='HTML'
         )
@@ -863,7 +976,7 @@ async def handle_main_menu(update: Update, context: CallbackContext):
         
     elif text == buttons['help']:
         await update.message.reply_text(
-            STRINGS[lang]['help_menu'],
+            get_string('help_menu', lang),
             reply_markup=get_help_keyboard(lang),
             parse_mode='HTML'
         )
@@ -876,11 +989,11 @@ async def handle_report_menu(update: Update, context: CallbackContext):
     user_data = get_user(user_id) or {}
     lang = user_data.get('lang', 'en')
     text = update.message.text
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     
     if text == buttons['start_new_report']:
         await update.message.reply_text(
-            STRINGS[lang]['send_username'],
+            get_string('send_username', lang),
             parse_mode='HTML'
         )
         return USERNAME_INPUT
@@ -892,7 +1005,7 @@ async def handle_report_menu(update: Update, context: CallbackContext):
         is_admin_user = is_admin(user_id)
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -905,7 +1018,7 @@ async def handle_report_menu(update: Update, context: CallbackContext):
         is_admin_user = is_admin(user_id)
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -918,7 +1031,7 @@ async def handle_settings_menu(update: Update, context: CallbackContext):
     user_data = get_user(user_id) or {}
     lang = user_data.get('lang', 'en')
     text = update.message.text
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     
     if text == "⬅️ Back":
         name = user_data.get('display_name', 'User')
@@ -927,7 +1040,7 @@ async def handle_settings_menu(update: Update, context: CallbackContext):
         is_admin_user = is_admin(user_id)
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -940,7 +1053,7 @@ async def handle_settings_menu(update: Update, context: CallbackContext):
         is_admin_user = is_admin(user_id)
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -971,7 +1084,7 @@ async def handle_help_menu(update: Update, context: CallbackContext):
     user_data = get_user(user_id) or {}
     lang = user_data.get('lang', 'en')
     text = update.message.text
-    buttons = BUTTON_TEXTS[lang]
+    buttons = get_all_buttons(lang)
     
     if text == "⬅️ Back":
         name = user_data.get('display_name', 'User')
@@ -980,7 +1093,7 @@ async def handle_help_menu(update: Update, context: CallbackContext):
         is_admin_user = is_admin(user_id)
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -993,7 +1106,7 @@ async def handle_help_menu(update: Update, context: CallbackContext):
         is_admin_user = is_admin(user_id)
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -1018,7 +1131,7 @@ async def handle_username_input(update: Update, context: CallbackContext):
     
     if not is_valid:
         await update.message.reply_text(
-            STRINGS[lang]['invalid_username'],
+            get_string('invalid_username', lang),
             parse_mode='HTML'
         )
         return USERNAME_INPUT
@@ -1029,11 +1142,11 @@ async def handle_username_input(update: Update, context: CallbackContext):
     
     # Create report type buttons
     keyboard = []
-    for key, value in REPORT_TYPES.items():
-        keyboard.append([InlineKeyboardButton(value, callback_data=f'type_{key}')])
+    for key in get_all_report_types().keys():
+        keyboard.append([InlineKeyboardButton(get_report_type(key), callback_data=f'type_{key}')])
     
     await update.message.reply_text(
-        STRINGS[lang]['choose_report_type'],
+        get_string('choose_report_type', lang),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='HTML'
     )
@@ -1053,13 +1166,13 @@ async def handle_report_type(update: Update, context: CallbackContext):
     
     if report_type == 'impersonation':
         await query.edit_message_text(
-            STRINGS[lang]['ask_impersonation_url'],
+            get_string('ask_impersonation_url', lang),
             parse_mode='HTML'
         )
         return IMPERSONATION_URL
     else:
         username = context.user_data['target_username']
-        type_name = REPORT_TYPES[report_type]
+        type_name = get_report_type(report_type)
         
         keyboard = [
             [InlineKeyboardButton("🚀 LAUNCH ATTACK", callback_data='start_report')],
@@ -1067,7 +1180,7 @@ async def handle_report_type(update: Update, context: CallbackContext):
         ]
         
         await query.edit_message_text(
-            STRINGS[lang]['confirm_start'].format(username=username, type=type_name, ig_username=ig_username),
+            get_string('confirm_start', lang).format(username=username, type=type_name, ig_username=ig_username),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='HTML'
         )
@@ -1088,7 +1201,7 @@ async def handle_impersonation_url(update: Update, context: CallbackContext):
     ]
     
     await update.message.reply_text(
-        STRINGS[lang]['confirm_start'].format(username=username, type=REPORT_TYPES['impersonation'], ig_username=ig_username),
+        get_string('confirm_start', lang).format(username=username, type=get_report_type('impersonation'), ig_username=ig_username),
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='HTML'
     )
@@ -1121,7 +1234,7 @@ async def handle_report_loop(update: Update, context: CallbackContext):
         reporting_tasks[user_id] = task
         
         await query.edit_message_text(
-            STRINGS[lang]['reporting_started'].format(username=username, ig_username=ig_username),
+            get_string('reporting_started', lang).format(username=username, ig_username=ig_username),
             parse_mode='HTML'
         )
         
@@ -1147,14 +1260,14 @@ async def handle_report_loop(update: Update, context: CallbackContext):
         
         try:
             await query.edit_message_text(
-                STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
+                get_string('reporting_stopped', lang).format(total_strikes=total_strikes),
                 parse_mode='HTML'
             )
         except Exception as e:
             # Handle case where message can't be edited
             await context.bot.send_message(
                 chat_id=user_id,
-                text=STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
+                text=get_string('reporting_stopped', lang).format(total_strikes=total_strikes),
                 parse_mode='HTML'
             )
         
@@ -1164,7 +1277,7 @@ async def handle_report_loop(update: Update, context: CallbackContext):
         
         await context.bot.send_message(
             chat_id=user_id,
-            text=STRINGS[lang]['main_menu'].format(name=name, reports=updated_reports, ig_username=ig_username),
+            text=get_string('main_menu', lang).format(name=name, reports=updated_reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -1173,7 +1286,7 @@ async def handle_report_loop(update: Update, context: CallbackContext):
     elif query.data == 'cancel_report':
         try:
             await query.edit_message_text(
-                STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+                get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
                 parse_mode='HTML'
             )
         except Exception as e:
@@ -1181,7 +1294,7 @@ async def handle_report_loop(update: Update, context: CallbackContext):
         
         await context.bot.send_message(
             chat_id=user_id,
-            text=STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            text=get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, is_admin_user),
             parse_mode='HTML'
         )
@@ -1210,7 +1323,7 @@ async def handle_stop_attack(update: Update, context: CallbackContext):
         end_report_session(session_id)
     
     await update.message.reply_text(
-        STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
+        get_string('reporting_stopped', lang).format(total_strikes=total_strikes),
         parse_mode='HTML'
     )
     
@@ -1219,7 +1332,7 @@ async def handle_stop_attack(update: Update, context: CallbackContext):
     updated_reports = user_data.get('total_reports', 0)
     
     await update.message.reply_text(
-        STRINGS[lang]['main_menu'].format(name=name, reports=updated_reports, ig_username=ig_username),
+        get_string('main_menu', lang).format(name=name, reports=updated_reports, ig_username=ig_username),
         reply_markup=get_main_keyboard(lang, is_admin_user),
         parse_mode='HTML'
     )
@@ -1245,11 +1358,11 @@ async def start_infinite_reporting(context: CallbackContext, user_id: str, usern
                 update_report_session(session_id, success_rate)
             
             if success_rate:
-                message = STRINGS[lang]['report_success'].format(count=report_count, username=username)
+                message = get_string('report_success', lang).format(count=report_count, username=username)
                 # Update user report count on success
                 update_user_reports(user_id, True)
             else:
-                message = STRINGS[lang]['report_failed'].format(count=report_count, username=username)
+                message = get_string('report_failed', lang).format(count=report_count, username=username)
                 update_user_reports(user_id, False)
             
             # Send report status (only every 3 reports to avoid spam)
@@ -1287,20 +1400,20 @@ async def handle_language_change(update: Update, context: CallbackContext):
     ig_username = user_data.get('ig_username', 'Unknown')
     
     await query.edit_message_text(
-        STRINGS[new_lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+        get_string('main_menu', new_lang).format(name=name, reports=reports, ig_username=ig_username),
         parse_mode='HTML'
     )
     
     await context.bot.send_message(
         chat_id=user_id,
-        text=STRINGS[new_lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+        text=get_string('main_menu', new_lang).format(name=name, reports=reports, ig_username=ig_username),
         reply_markup=get_main_keyboard(new_lang, is_admin_user),
         parse_mode='HTML'
     )
     
     return MAIN_MENU
 
-# Admin functions with proper error handling
+# ================= ADVANCED ADMIN FUNCTIONS =================
 async def admin_panel(update: Update, context: CallbackContext):
     # Handle both message and callback query
     if hasattr(update, 'callback_query') and update.callback_query:
@@ -1318,7 +1431,7 @@ async def admin_panel(update: Update, context: CallbackContext):
     total_users = len(all_users)
     active_reports_count = len(active_reports)
     
-    admin_text = STRINGS['en']['admin_panel'].format(
+    admin_text = get_string('admin_panel', 'en').format(
         total_users=total_users,
         active_reports=active_reports_count
     )
@@ -1345,7 +1458,7 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
         ig_username = user_data.get('ig_username', 'Unknown')
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, True),
             parse_mode='HTML'
         )
@@ -1353,14 +1466,14 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
         
     elif text == "📢 Broadcast":
         await update.message.reply_text(
-            STRINGS[lang]['broadcast_prompt'],
+            get_string('broadcast_prompt', lang),
             parse_mode='HTML'
         )
         return BROADCAST_MESSAGE
         
     elif text == "👥 Users":
         all_users = get_all_users()
-        users_text = STRINGS[lang]['user_list'].format(users="")
+        users_text = get_string('user_list', lang).format(users="")
         user_list = ""
         
         for i, user_data in enumerate(all_users[:15], 1):  # Show first 15 users
@@ -1418,25 +1531,23 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
                 print(f"Error processing user data: {e}")
                 continue
         
-        stats = f"""📊 <b>DETAILED BOT STATISTICS</b>
-
-👥 <b>User Statistics:</b>
-• Total Users: <b>{total_users}</b>
-• Verified Users: <b>{verified_users}</b>
-• Active (24h): <b>{active_users}</b>
-• New Today: <b>{today_joins}</b>
-
-📈 <b>Report Statistics:</b>
-• Total Reports: <b>{total_reports}</b>
-• Active Sessions: <b>{len(active_reports)}</b>
-• Success Rate: <b>98.5%</b>
-
-⚡ <b>System Status:</b>
-• Database: <b>Connected</b>
-• Bot Status: <b>Running</b>
-• Last Update: <b>{now.strftime('%d/%m/%Y %H:%M:%S')}</b>"""
+        stats = get_string('user_stats', lang).format(
+            total=total_users,
+            active=active_users,
+            today=today_joins,
+            total_reports=total_reports
+        )
         
         await update.message.reply_text(stats, parse_mode='HTML')
+    
+    elif text == "🛠️ Customize":
+        await update.message.reply_text(
+            "🎨 <b>ADVANCED CUSTOMIZATION PANEL</b>\n\n"
+            "Select what you want to customize:",
+            reply_markup=get_customization_keyboard(),
+            parse_mode='HTML'
+        )
+        return ADMIN_SETTINGS
     
     elif text == "🏠 Home":
         name = user_data.get('display_name', 'Admin')
@@ -1444,7 +1555,7 @@ async def handle_admin_buttons(update: Update, context: CallbackContext):
         ig_username = user_data.get('ig_username', 'Unknown')
         
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports, ig_username=ig_username),
+            get_string('main_menu', lang).format(name=name, reports=reports, ig_username=ig_username),
             reply_markup=get_main_keyboard(lang, True),
             parse_mode='HTML'
         )
@@ -1477,12 +1588,577 @@ async def handle_broadcast(update: Update, context: CallbackContext):
             continue
     
     await update.message.reply_text(
-        STRINGS['en']['broadcast_sent'].format(count=success_count),
+        get_string('broadcast_sent', 'en').format(count=success_count),
         parse_mode='HTML'
     )
     
     return ADMIN_PANEL
 
+# ================= BUTTON CUSTOMIZATION =================
+async def customize_buttons(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'  # Admin uses English for customization
+    
+    # Get all existing buttons
+    buttons = get_all_buttons(lang)
+    button_list = "\n".join([f"• <b>{key}</b>: {text}" for key, text in buttons.items()])
+    
+    await update.message.reply_text(
+        f"🔘 <b>BUTTON MANAGEMENT</b>\n\n"
+        f"Current buttons:\n{button_list}\n\n"
+        "Select an action:",
+        reply_markup=get_button_management_keyboard(),
+        parse_mode='HTML'
+    )
+    return CUSTOMIZE_BUTTONS
+
+async def edit_button_selection(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'
+    buttons = get_all_buttons(lang)
+    
+    # Create keyboard with buttons to edit
+    keyboard = []
+    for key in buttons.keys():
+        keyboard.append([KeyboardButton(key)])
+    keyboard.append([KeyboardButton("⬅️ Back")])
+    
+    await update.message.reply_text(
+        get_string('customize_buttons', lang),
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode='HTML'
+    )
+    return EDIT_BUTTON_TEXT
+
+async def edit_button_text(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    button_key = update.message.text
+    context.user_data['editing_button'] = button_key
+    
+    current_text = get_button_text(button_key, 'en')
+    
+    await update.message.reply_text(
+        get_string('edit_button_prompt', 'en').format(current=current_text),
+        parse_mode='HTML'
+    )
+    return EDIT_BUTTON_TEXT
+
+async def save_button_text_handler(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    new_text = update.message.text
+    button_key = context.user_data.get('editing_button')
+    
+    if button_key:
+        try:
+            db = get_db_connection()
+            if db:
+                # Save for all languages
+                for lang in ['en', 'hi']:
+                    db.bot_buttons.update_one(
+                        {"button_key": button_key, "lang": lang},
+                        {"$set": {"text": new_text}},
+                        upsert=True
+                    )
+                
+                await update.message.reply_text(
+                    get_string('button_updated', 'en').format(button_key=button_key, new_text=new_text),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Database connection error",
+                    parse_mode='HTML'
+                )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error saving button text: {e}",
+                parse_mode='HTML'
+            )
+    else:
+        await update.message.reply_text(
+            "❌ Error: Button key not found",
+            parse_mode='HTML'
+        )
+    
+    return await customize_buttons(update, context)
+
+async def add_new_button(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    await update.message.reply_text(
+        get_string('add_button_prompt', 'en'),
+        parse_mode='HTML'
+    )
+    return ADD_NEW_BUTTON
+
+async def save_new_button_key(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    button_key = update.message.text.strip()
+    
+    # Check if button key already exists
+    if get_button_text(button_key, 'en') != button_key:
+        await update.message.reply_text(
+            get_string('button_exists', 'en').format(button_key=button_key),
+            parse_mode='HTML'
+        )
+        return ADD_NEW_BUTTON
+    
+    context.user_data['new_button_key'] = button_key
+    
+    await update.message.reply_text(
+        "Enter text for the new button (English):",
+        parse_mode='HTML'
+    )
+    return ADD_NEW_BUTTON
+
+async def save_new_button_text(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    button_text = update.message.text
+    button_key = context.user_data.get('new_button_key')
+    
+    if button_key:
+        try:
+            db = get_db_connection()
+            if db:
+                # Save English version
+                db.bot_buttons.insert_one({
+                    "button_key": button_key,
+                    "lang": "en",
+                    "text": button_text
+                })
+                
+                # Save Hindi version (default to same as English)
+                db.bot_buttons.insert_one({
+                    "button_key": button_key,
+                    "lang": "hi",
+                    "text": button_text
+                })
+                
+                await update.message.reply_text(
+                    get_string('button_added', 'en').format(button_key=button_key, button_text=button_text),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Database connection error",
+                    parse_mode='HTML'
+                )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error adding new button: {e}",
+                parse_mode='HTML'
+            )
+    else:
+        await update.message.reply_text(
+            "❌ Error: Button key missing",
+            parse_mode='HTML'
+        )
+    
+    # Clean up
+    if 'new_button_key' in context.user_data:
+        del context.user_data['new_button_key']
+    
+    return await customize_buttons(update, context)
+
+async def remove_button_selection(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'
+    buttons = get_all_buttons(lang)
+    
+    # Create keyboard with removable buttons
+    keyboard = []
+    for key in buttons.keys():
+        # Prevent removal of essential buttons
+        if key not in ['home', 'admin_panel']:
+            keyboard.append([KeyboardButton(key)])
+    keyboard.append([KeyboardButton("⬅️ Back")])
+    
+    await update.message.reply_text(
+        get_string('remove_button_prompt', 'en'),
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode='HTML'
+    )
+    return REMOVE_BUTTON
+
+async def remove_button_confirmation(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    button_key = update.message.text
+    context.user_data['removing_button'] = button_key
+    
+    button_text = get_button_text(button_key, 'en')
+    
+    await update.message.reply_text(
+        f"⚠️ <b>CONFIRM BUTTON REMOVAL</b>\n\n"
+        f"Button Key: <code>{button_key}</code>\n"
+        f"Text: <b>{button_text}</b>\n\n"
+        "Are you sure you want to remove this button?",
+        reply_markup=ReplyKeyboardMarkup([
+            ["✅ Yes, Remove", "❌ Cancel"],
+            ["⬅️ Back"]
+        ], resize_keyboard=True),
+        parse_mode='HTML'
+    )
+    return REMOVE_BUTTON
+
+async def execute_button_removal(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    if update.message.text == "✅ Yes, Remove":
+        button_key = context.user_data.get('removing_button')
+        
+        if button_key:
+            try:
+                db = get_db_connection()
+                if db:
+                    # Remove from database
+                    db.bot_buttons.delete_many({"button_key": button_key})
+                    
+                    await update.message.reply_text(
+                        get_string('button_removed', 'en').format(button_key=button_key),
+                        parse_mode='HTML'
+                    )
+                else:
+                    await update.message.reply_text(
+                        "❌ Database connection error",
+                        parse_mode='HTML'
+                    )
+            except Exception as e:
+                await update.message.reply_text(
+                    f"❌ Error removing button: {e}",
+                    parse_mode='HTML'
+                )
+        else:
+            await update.message.reply_text(
+                "❌ Error: Button key missing",
+                parse_mode='HTML'
+            )
+    
+    # Clean up
+    if 'removing_button' in context.user_data:
+        del context.user_data['removing_button']
+    
+    return await customize_buttons(update, context)
+
+async def reorder_buttons(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'
+    buttons = list(get_all_buttons(lang).keys())
+    
+    # Create a numbered list of buttons
+    button_list = "\n".join([f"{i+1}. {button}" for i, button in enumerate(buttons)])
+    
+    context.user_data['current_button_order'] = buttons
+    
+    await update.message.reply_text(
+        get_string('reorder_buttons', 'en').format(button_list=button_list),
+        parse_mode='HTML'
+    )
+    return REORDER_BUTTONS
+
+async def save_button_order(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    try:
+        order_str = update.message.text
+        new_order_indices = [int(i.strip()) - 1 for i in order_str.split(',')]
+        current_buttons = context.user_data.get('current_button_order', [])
+        
+        if len(new_order_indices) != len(current_buttons):
+            await update.message.reply_text(
+                "❌ Error: Number of positions doesn't match number of buttons",
+                parse_mode='HTML'
+            )
+            return REORDER_BUTTONS
+        
+        # Create new ordered list
+        new_order = [current_buttons[i] for i in new_order_indices]
+        
+        # Save new order to database
+        try:
+            db = get_db_connection()
+            if db:
+                # Store the new order
+                db.bot_settings.update_one(
+                    {"setting_key": "button_order"},
+                    {"$set": {"value": new_order}},
+                    upsert=True
+                )
+                
+                await update.message.reply_text(
+                    get_string('buttons_reordered', 'en'),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Database connection error",
+                    parse_mode='HTML'
+                )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error saving button order: {e}",
+                parse_mode='HTML'
+            )
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Invalid format. Please enter numbers separated by commas",
+            parse_mode='HTML'
+        )
+        return REORDER_BUTTONS
+    
+    # Clean up
+    if 'current_button_order' in context.user_data:
+        del context.user_data['current_button_order']
+    
+    return await customize_buttons(update, context)
+
+# ================= STRING CUSTOMIZATION =================
+async def customize_strings(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'  # Admin uses English for customization
+    
+    # Get all existing strings
+    strings = get_all_strings(lang)
+    string_list = "\n".join([f"• <b>{key}</b>" for key in strings.keys()])
+    
+    await update.message.reply_text(
+        f"📝 <b>MESSAGE CUSTOMIZATION</b>\n\n"
+        f"Available messages:\n{string_list}\n\n"
+        "Select a message to edit:",
+        reply_markup=ReplyKeyboardMarkup([
+            [KeyboardButton("✏️ Edit Message")],
+            [KeyboardButton("⬅️ Back")]
+        ], resize_keyboard=True),
+        parse_mode='HTML'
+    )
+    return CUSTOMIZE_STRINGS
+
+async def edit_string_selection(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'
+    strings = get_all_strings(lang)
+    
+    # Create keyboard with strings to edit
+    keyboard = []
+    for key in strings.keys():
+        keyboard.append([KeyboardButton(key)])
+    keyboard.append([KeyboardButton("⬅️ Back")])
+    
+    await update.message.reply_text(
+        get_string('customize_strings', 'en'),
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode='HTML'
+    )
+    return EDIT_STRING_TEXT
+
+async def edit_string_text(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    string_key = update.message.text
+    context.user_data['editing_string'] = string_key
+    
+    current_text = get_string(string_key, 'en')
+    
+    # Truncate for display
+    display_text = (current_text[:300] + '...') if len(current_text) > 300 else current_text
+    
+    await update.message.reply_text(
+        f"✏️ <b>EDIT MESSAGE TEXT</b>\n\n"
+        f"Key: <code>{string_key}</code>\n"
+        f"Current Text:\n<pre>{display_text}</pre>\n\n"
+        "Enter new text for this message:",
+        parse_mode='HTML'
+    )
+    return EDIT_STRING_TEXT
+
+async def save_string_text_handler(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    new_text = update.message.text
+    string_key = context.user_data.get('editing_string')
+    
+    if string_key:
+        try:
+            db = get_db_connection()
+            if db:
+                # Save for all languages
+                for lang in ['en', 'hi']:
+                    db.bot_strings.update_one(
+                        {"string_key": string_key, "lang": lang},
+                        {"$set": {"text": new_text}},
+                        upsert=True
+                    )
+                
+                await update.message.reply_text(
+                    get_string('string_updated', 'en').format(string_key=string_key),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Database connection error",
+                    parse_mode='HTML'
+                )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error saving message text: {e}",
+                parse_mode='HTML'
+            )
+    else:
+        await update.message.reply_text(
+            "❌ Error: Message key not found",
+            parse_mode='HTML'
+        )
+    
+    return await customize_strings(update, context)
+
+# ================= REPORT TYPE CUSTOMIZATION =================
+async def customize_report_types(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'  # Admin uses English for customization
+    
+    # Get all existing report types
+    report_types = get_all_report_types()
+    type_list = "\n".join([f"• <b>{key}</b>: {text}" for key, text in report_types.items()])
+    
+    await update.message.reply_text(
+        f"⚔️ <b>REPORT TYPE CUSTOMIZATION</b>\n\n"
+        f"Current report types:\n{type_list}\n\n"
+        "Select an action:",
+        reply_markup=ReplyKeyboardMarkup([
+            [KeyboardButton("✏️ Edit Report Type")],
+            [KeyboardButton("⬅️ Back")]
+        ], resize_keyboard=True),
+        parse_mode='HTML'
+    )
+    return CUSTOMIZE_REPORT_TYPES
+
+async def edit_report_type_selection(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    lang = 'en'
+    report_types = get_all_report_types()
+    
+    # Create keyboard with report types to edit
+    keyboard = []
+    for key in report_types.keys():
+        keyboard.append([KeyboardButton(key)])
+    keyboard.append([KeyboardButton("⬅️ Back")])
+    
+    await update.message.reply_text(
+        get_string('customize_report_types', 'en'),
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True),
+        parse_mode='HTML'
+    )
+    return EDIT_REPORT_TYPE
+
+async def edit_report_type_text(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    type_key = update.message.text
+    context.user_data['editing_report_type'] = type_key
+    
+    current_text = get_report_type(type_key)
+    
+    await update.message.reply_text(
+        f"✏️ <b>EDIT REPORT TYPE</b>\n\n"
+        f"Type Key: <code>{type_key}</code>\n"
+        f"Current Text: <b>{current_text}</b>\n\n"
+        "Enter new text for this report type:",
+        parse_mode='HTML'
+    )
+    return EDIT_REPORT_TYPE
+
+async def save_report_type_text(update: Update, context: CallbackContext):
+    user_id = str(update.effective_user.id)
+    if not is_admin(user_id):
+        return ADMIN_PANEL
+    
+    new_text = update.message.text
+    type_key = context.user_data.get('editing_report_type')
+    
+    if type_key:
+        try:
+            db = get_db_connection()
+            if db:
+                # Save the report type
+                db.report_types.update_one(
+                    {"type_key": type_key},
+                    {"$set": {"text": new_text}},
+                    upsert=True
+                )
+                
+                await update.message.reply_text(
+                    get_string('report_type_updated', 'en').format(type_key=type_key, new_text=new_text),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Database connection error",
+                    parse_mode='HTML'
+                )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error saving report type: {e}",
+                parse_mode='HTML'
+            )
+    else:
+        await update.message.reply_text(
+            "❌ Error: Report type key not found",
+            parse_mode='HTML'
+        )
+    
+    return await customize_report_types(update, context)
+
+# ================= MAIN FUNCTION =================
 def main():
     # Initialize database
     db_status = init_database()
@@ -1501,6 +2177,7 @@ def main():
         print(f"👑 Admin ID: {ADMIN_ID}")
         print("🗄️ MongoDB Database Integrated")
         print("🔐 Instagram Login System Active")
+        print("🎨 Advanced Admin Panel Enabled")
         
         # Create application with proper error handling
         app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -1535,7 +2212,36 @@ def main():
                 ADMIN_PANEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_buttons)],
                 BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)],
                 SETTINGS_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_menu)],
-                HELP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_help_menu)]
+                HELP_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_help_menu)],
+                ADMIN_SETTINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: customize_buttons(u, c))],
+                CUSTOMIZE_BUTTONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, customize_buttons)],
+                EDIT_BUTTON_TEXT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, edit_button_selection),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_button_text_handler)
+                ],
+                ADD_NEW_BUTTON: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_button_key),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_new_button_text)
+                ],
+                REMOVE_BUTTON: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_button_selection),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, remove_button_confirmation),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, execute_button_removal)
+                ],
+                REORDER_BUTTONS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, reorder_buttons),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_button_order)
+                ],
+                CUSTOMIZE_STRINGS: [MessageHandler(filters.TEXT & ~filters.COMMAND, customize_strings)],
+                EDIT_STRING_TEXT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, edit_string_selection),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_string_text_handler)
+                ],
+                CUSTOMIZE_REPORT_TYPES: [MessageHandler(filters.TEXT & ~filters.COMMAND, customize_report_types)],
+                EDIT_REPORT_TYPE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, edit_report_type_selection),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, save_report_type_text)
+                ]
             },
             fallbacks=[
                 CommandHandler('start', start),
