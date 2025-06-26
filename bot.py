@@ -150,13 +150,28 @@ def init_database():
             print("⚠️ Database not available, using fallback mode")
             return False
         
-        # Create indexes for better performance
-        db.users.create_index("user_id", unique=True)
-        db.reports.create_index("user_id")
-        db.reports.create_index("created_at")
-        db.report_sessions.create_index("user_id")
-        db.report_sessions.create_index("started_at")
-        db.bot_settings.create_index("setting_key", unique=True)
+        # Clean up any null user_id entries first
+        try:
+            db.users.delete_many({"user_id": None})
+            db.users.delete_many({"user_id": ""})
+        except Exception as cleanup_error:
+            print(f"⚠️ Cleanup warning: {cleanup_error}")
+        
+        # Create indexes for better performance with proper error handling
+        try:
+            db.users.create_index("user_id", unique=True, sparse=True)
+        except Exception as index_error:
+            if "already exists" not in str(index_error):
+                print(f"⚠️ User index warning: {index_error}")
+        
+        try:
+            db.reports.create_index("user_id")
+            db.reports.create_index("created_at")
+            db.report_sessions.create_index("user_id")
+            db.report_sessions.create_index("started_at")
+            db.bot_settings.create_index("setting_key", unique=True, sparse=True)
+        except Exception as index_error:
+            print(f"⚠️ Index warning: {index_error}")
         
         print("✅ MongoDB collections and indexes initialized successfully!")
         return True
@@ -763,10 +778,18 @@ async def handle_report_loop(update: Update, context: CallbackContext):
         if session_id:
             end_report_session(session_id)
         
-        await query.edit_message_text(
-            STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
-            parse_mode='HTML'
-        )
+        try:
+            await query.edit_message_text(
+                STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            # Handle case where message can't be edited
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
+                parse_mode='HTML'
+            )
         
         await asyncio.sleep(2)
         
@@ -783,10 +806,13 @@ async def handle_report_loop(update: Update, context: CallbackContext):
         return MAIN_MENU
         
     elif query.data == 'cancel_report':
-        await query.edit_message_text(
-            STRINGS[lang]['main_menu'].format(name=name, reports=reports),
-            parse_mode='HTML'
-        )
+        try:
+            await query.edit_message_text(
+                STRINGS[lang]['main_menu'].format(name=name, reports=reports),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            pass
         
         await context.bot.send_message(
             chat_id=user_id,
@@ -800,6 +826,7 @@ async def handle_report_loop(update: Update, context: CallbackContext):
 
 async def start_infinite_reporting(context: CallbackContext, user_id: str, username: str, report_type: str, lang: str, session_id: int):
     report_count = 0
+    last_message_id = None
     
     while active_reports.get(user_id, False):
         try:
@@ -825,15 +852,24 @@ async def start_infinite_reporting(context: CallbackContext, user_id: str, usern
                 message = STRINGS[lang]['report_failed'].format(count=report_count, username=username)
                 update_user_reports(user_id, False)
             
-            # Send report status with stop button
-            keyboard = [[InlineKeyboardButton("⏹️ STOP ATTACK / अटैक बंद करें", callback_data='stop_report')]]
-            
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=message,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='HTML'
-            )
+            # Send report status with stop button (only every 5 reports to avoid spam)
+            if report_count % 5 == 1 or report_count <= 3:
+                keyboard = [[InlineKeyboardButton("⏹️ STOP ATTACK / अटैक बंद करें", callback_data='stop_report')]]
+                
+                sent_message = await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
+                last_message_id = sent_message.message_id
+            else:
+                # Just send status without button to reduce button conflicts
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode='HTML'
+                )
             
             # Random delay between 1-3 seconds
             await asyncio.sleep(random.uniform(1.5, 3.0))
@@ -1058,7 +1094,8 @@ async def handle_broadcast(update: Update, context: CallbackContext):
 
 def main():
     # Initialize database
-    if not init_database():
+    db_status = init_database()
+    if not db_status:
         print("⚠️ Running without database - using fallback mode")
     
     # Get bot token from environment variable
@@ -1106,9 +1143,15 @@ def main():
         
         print("✅ Bot started successfully!")
         print("🔥 Ready to launch mass Instagram reports!")
-        print("💾 Database status: Connected" if get_db_connection() else "Fallback mode")
         
-        app.run_polling(drop_pending_updates=True)
+        # Check database connection safely
+        db_conn = get_db_connection()
+        if db_conn is not None:
+            print("💾 Database status: Connected")
+        else:
+            print("💾 Database status: Fallback mode")
+        
+        app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
         
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
