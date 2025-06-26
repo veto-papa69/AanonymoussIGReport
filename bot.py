@@ -1111,11 +1111,7 @@ def main():
         print("🗄️ MongoDB Database Integrated")
         
         # Create application with proper error handling
-        app = (
-            ApplicationBuilder()
-            .token(BOT_TOKEN)
-            .build()
-        )
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
 
         # Main conversation handler with proper per_message settings
         conv = ConversationHandler(
@@ -1158,11 +1154,7 @@ def main():
         
         # Start the bot with proper polling
         print("🔄 Starting polling...")
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-            close_loop=False
-        )
+        app.run_polling(drop_pending_updates=True)
         
     except Exception as e:
         print(f"❌ Error starting bot: {e}")
