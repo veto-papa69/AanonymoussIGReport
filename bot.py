@@ -1,807 +1,565 @@
 import os
-import json
 import re
-from pymongo import MongoClient
-from datetime import datetime, timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import (ApplicationBuilder, CallbackContext, CommandHandler, MessageHandler, filters,
-                          CallbackQueryHandler, ConversationHandler)
 import random
 import asyncio
-import threading
-from pymongo.errors import DuplicateKeyError
+from pymongo import MongoClient
+from datetime import datetime
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    KeyboardButton
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackContext,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    filters
+)
 
 # Constants
 ADMIN_ID = 6881713177  # Your admin ID
-TELEGRAM_BOT_TOKEN = "7275717734:AAE6bq0Mdypn_wQL6F1wpphzEtLAco3_B3Y"
-TELEGRAM_CHAT_ID = "6881713177"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7275717734:AAE6bq0Mdypn_wQL6F1wpphzEtLAco3_B3Y")
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://instaboost_user:uX1YzKjiOETNhyYj@cluster0.tolxjiz.mongodb.net/instaboost?retryWrites=true&w=majority&appName=Cluster0")
 
-# States for ConversationHandler
-MAIN_MENU, REGISTER, PROFILE, REPORT_MENU, USERNAME_INPUT, REPORT_TYPE, IMPERSONATION_URL, REPORT_LOOP = range(8)
-IG_LOGIN, IG_USERNAME, IG_PASSWORD = range(20, 23)
+# States
+START, LANGUAGE, REGISTER, IG_USERNAME, IG_PASSWORD, MAIN_MENU, REPORT_MENU, \
+TARGET_USERNAME, REPORT_TYPE, REPORTING, ADMIN_PANEL, BROADCAST_MESSAGE = range(12)
 
-# Admin Panel States
-ADMIN_PANEL, BROADCAST_MESSAGE, VIEW_USERS, USER_STATS = range(100, 104)
-
-# Customizable settings
-BOT_SETTINGS = {
-    'font_style': 'HTML',
-    'theme': 'premium',
-    'emoji_style': 'full',
-    'button_style': 'modern'
-}
-
-# Language strings
+# Strings
 STRINGS = {
     'en': {
-        'welcome': "🔥 <b>PREMIUM IG REPORTER V2.0</b> 🔥\n\n🎯 <b>Ultimate Instagram Mass Reporter</b>\n⚡ Lightning Fast • 🔒 100% Anonymous • 💯 Guaranteed Results\n\n🚀 <i>Join thousands of satisfied users!</i>",
-        'main_menu': "🏠 <b>MAIN DASHBOARD</b>\n\n🎯 Choose your action:",
-        'profile': "👤 <b>USER PROFILE</b>\n\n📊 Total Reports: <b>{reports}</b>\n⚡ Status: <b>PREMIUM USER</b>",
-        'report_menu': "⚔️ <b>REPORT ATTACK CENTER</b>\n\n🎯 Ready to launch mass reports?",
-        'send_username': "📱 <b>TARGET SELECTION</b>\n\n🎯 Enter Instagram username to report:\n\n⚠️ <b>Format:</b> @username\n❌ <b>No emojis allowed</b>\n\n<i>Example: @target_account</i>",
-        'choose_report_type': "⚔️ <b>SELECT REPORT TYPE</b>\n\n🎯 Choose violation category:",
-        'ask_impersonation_url': "🔗 <b>IMPERSONATION EVIDENCE</b>\n\n📎 Send URL of the original account (optional):",
-        'confirm_start': "🚀 <b>ATTACK READY TO LAUNCH</b>\n\n🎯 Target: <b>@{username}</b>\n⚔️ Type: <b>{type}</b>",
-        'reporting_started': "💥 <b>MASS REPORTING STARTED!</b>\n\n🎯 Target: <b>@{username}</b>\n⚡ Reports launching every 1-3 seconds...",
-        'reporting_stopped': "⏹️ <b>ATTACK STOPPED</b>\n\n💥 Total strikes: <b>{total_strikes}</b>",
-        'report_success': "✅ <b>STRIKE #{count} SUCCESSFUL</b>\n🎯 Target: <b>@{username}</b>",
-        'report_failed': "❌ <b>STRIKE #{count} FAILED</b>\n🎯 Target: <b>@{username}</b>\n🔄 Retrying...",
-        'invalid_username': "❌ <b>INVALID USERNAME</b>\n\n⚠️ Username must start with @ and contain only letters, numbers, dots, underscores",
-        'admin_panel': "👑 <b>ADMIN CONTROL CENTER</b>\n\n🛠️ Administrator Dashboard",
-        'user_stats': "📊 <b>BOT ANALYTICS</b>\n\n👥 Total Users: <b>{total}</b>",
-        'user_list': "👥 <b>REGISTERED USERS</b>\n\n{users}",
-        'broadcast_prompt': "📢 <b>BROADCAST MESSAGE</b>\n\nType message to send to all users:",
-        'broadcast_sent': "✅ <b>Broadcast sent to {count} users!</b>",
-        'my_reports': "📊 <b>MY REPORT HISTORY</b>\n\n{report_list}",
-        'no_reports': "📭 <b>No reports found</b>",
-        'settings_menu': "⚙️ <b>BOT SETTINGS</b>",
-        'help_menu': "ℹ️ <b>HELP & SUPPORT</b>\n\nHow to use:\n1. Enter target username\n2. Choose report type\n3. Start reporting",
-        'optional_login': "🔐 <b>OPTIONAL LOGIN</b>\n\n🌟 For enhanced features, you can login with Instagram\n\n📱 Enter Instagram username:",
-        'login_canceled': "🔓 <b>Continuing without login</b>\n\nYou can still report accounts!"
+        'welcome': "🔥 <b>PREMIUM IG REPORTER</b> 🔥\n\n🔐 <b>Login Required</b>\n\nTo use this bot, you must verify your identity with Instagram credentials",
+        'choose_lang': "🌐 Please choose your language:",
+        'register': "📝 <b>Registration</b>\n\nPlease enter your display name:",
+        'ig_username': "📱 <b>Instagram Login</b>\n\nEnter your Instagram username:",
+        'ig_password': "🔑 Enter your Instagram password:",
+        'login_success': "✅ <b>Login Successful!</b>\n\nWelcome @{username}",
+        'main_menu': "🏠 <b>Main Menu</b>\n\n👤 Account: @{ig_username}\n📊 Reports: {reports}",
+        'report_menu': "⚔️ <b>Report Center</b>",
+        'target_prompt': "🎯 <b>Target Selection</b>\n\nEnter Instagram username to report:",
+        'invalid_target': "❌ Invalid username!\n\n• Must start with @\n• No spaces or special characters",
+        'report_type': "⚖️ <b>Report Type</b>\n\nChoose violation category:",
+        'confirm_report': "🚀 <b>Ready to Report</b>\n\nTarget: {target}\nType: {report_type}",
+        'reporting_started': "💥 <b>Reporting Started!</b>\n\nTarget: {target}\n⚡ Reports every 1-3 seconds...",
+        'report_success': "✅ Report #{count} succeeded!",
+        'report_failed': "❌ Report #{count} failed, retrying...",
+        'report_stopped': "🛑 Reporting stopped!\n\nTotal reports sent: {count}",
+        'admin_panel': "👑 <b>Admin Panel</b>",
+        'broadcast_sent': "📢 Broadcast sent to {count} users!"
     },
     'hi': {
-        # Hindi translations would go here
-    }
-}
-
-# Button texts
-BUTTON_TEXTS = {
-    'en': {
-        'report_attack': '⚔️ Report Account',
-        'profile': '👤 Profile',
-        'my_reports': '📊 My Reports',
-        'home': '🏠 Home',
-        'admin_panel': '👑 Admin',
-        'language': '🌐 Language',
-        'help': 'ℹ️ Help',
-        'settings': '⚙️ Settings',
-        'start_new_report': '🚀 Start New Report',
-        'stop_attack': '⏹️ Stop Attack',
-        'login': '🔐 Login with IG',
-        'continue_without_login': '🚫 Continue Without Login'
-    },
-    'hi': {
-        # Hindi translations
+        'welcome': "🔥 <b>प्रीमियम IG रिपोर्टर</b> 🔥\n\n🔐 <b>लॉगिन आवश्यक</b>\n\nबॉट का उपयोग करने के लिए कृपया अपनी Instagram साख से पहचान सत्यापित करें",
+        'choose_lang': "🌐 कृपया अपनी भाषा चुनें:",
+        'register': "📝 <b>रजिस्ट्रेशन</b>\n\nकृपया अपना प्रदर्शन नाम दर्ज करें:",
+        'ig_username': "📱 <b>Instagram लॉगिन</b>\n\nअपना Instagram उपयोगकर्ता नाम दर्ज करें:",
+        'ig_password': "🔑 अपना Instagram पासवर्ड दर्ज करें:",
+        'login_success': "✅ <b>लॉगिन सफल!</b>\n\nस्वागत है @{username}",
+        'main_menu': "🏠 <b>मुख्य मेनू</b>\n\n👤 खाता: @{ig_username}\n📊 रिपोर्ट्स: {reports}",
+        'report_menu': "⚔️ <b>रिपोर्ट केंद्र</b>",
+        'target_prompt': "🎯 <b>लक्ष्य चयन</b>\n\nरिपोर्ट करने के लिए Instagram उपयोगकर्ता नाम दर्ज करें:",
+        'invalid_target': "❌ अमान्य उपयोगकर्ता नाम!\n\n• @ से शुरू होना चाहिए\n• कोई रिक्त स्थान या विशेष वर्ण नहीं",
+        'report_type': "⚖️ <b>रिपोर्ट प्रकार</b>\n\nउल्लंघन श्रेणी चुनें:",
+        'confirm_report': "🚀 <b>रिपोर्ट करने के लिए तैयार</b>\n\nलक्ष्य: {target}\nप्रकार: {report_type}",
+        'reporting_started': "💥 <b>रिपोर्टिंग शुरू हुई!</b>\n\nलक्ष्य: {target}\n⚡ हर 1-3 सेकंड में रिपोर्ट...",
+        'report_success': "✅ रिपोर्ट #{count} सफल!",
+        'report_failed': "❌ रिपोर्ट #{count} विफल, पुनः प्रयास कर रहे हैं...",
+        'report_stopped': "🛑 रिपोर्टिंग बंद कर दी गई!\n\nकुल रिपोर्ट भेजी गई: {count}",
+        'admin_panel': "👑 <b>एडमिन पैनल</b>",
+        'broadcast_sent': "📢 {count} उपयोगकर्ताओं को प्रसारण भेजा गया!"
     }
 }
 
 # Report types
 REPORT_TYPES = {
     'hate': '😡 Hate Speech',
-    'selfharm': '🆘 Self-Harm',
     'bully': '👊 Bullying',
     'impersonation': '🎭 Impersonation',
     'spam': '📧 Spam',
+    'nudity': '🔞 Nudity',
     'violence': '⚔️ Violence',
     'fake': '🚫 Fake Account'
 }
 
-# User session storage
-sessions = {}
-active_reports = {}
-reporting_tasks = {}
+# Database functions
+def get_db():
+    client = MongoClient(MONGODB_URI)
+    return client.ig_reporter
 
-# MongoDB connection
-def get_db_connection():
-    try:
-        mongodb_uri = os.environ.get('MONGODB_URI', 'mongodb+srv://instaboost_user:uX1YzKjiOETNhyYj@cluster0.tolxjiz.mongodb.net/instaboost?retryWrites=true&w=majority&appName=Cluster0')
-        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        client.admin.command('ping')
-        return client.instaboost
-    except Exception as e:
-        print(f"Database connection error: {e}")
-        return None
-
-def init_database():
-    try:
-        db = get_db_connection()
-        if not db:
-            return False
-        
-        # Create indexes
-        try:
-            db.users.create_index("user_id", unique=True)
-            db.reports.create_index("user_id")
-        except:
-            pass
-        
-        return True
-    except Exception as e:
-        print(f"Database initialization error: {e}")
-        return False
-
-def save_user(user_id, user_data):
-    try:
-        db = get_db_connection()
-        if not db:
-            return False
-        
-        user_doc = {
-            "user_id": user_id,
-            "username": user_data.get('username', ''),
-            "display_name": user_data.get('display_name', 'User'),
-            "ig_username": user_data.get('ig_username', ''),
-            "total_reports": user_data.get('total_reports', 0),
-            "last_active": datetime.now()
-        }
-        
-        db.users.update_one(
-            {"user_id": user_id},
-            {"$set": user_doc},
-            upsert=True
-        )
-        return True
-    except Exception as e:
-        print(f"Error saving user: {e}")
-        return False
+def save_user(user_id, data):
+    db = get_db()
+    user_data = {
+        'user_id': user_id,
+        'username': data.get('username', ''),
+        'display_name': data.get('display_name', ''),
+        'ig_username': data.get('ig_username', ''),
+        'ig_password': data.get('ig_password', ''),
+        'language': data.get('language', 'en'),
+        'reports': data.get('reports', 0),
+        'created_at': datetime.now(),
+        'last_active': datetime.now()
+    }
+    db.users.update_one(
+        {'user_id': user_id},
+        {'$set': user_data},
+        upsert=True
+    )
 
 def get_user(user_id):
-    try:
-        db = get_db_connection()
-        if not db:
-            return None
-        
-        user = db.users.find_one({"user_id": user_id})
-        if user:
-            user.pop('_id', None)
-            return user
-        return None
-    except Exception as e:
-        print(f"Error getting user: {e}")
-        return None
+    db = get_db()
+    return db.users.find_one({'user_id': user_id})
 
-def update_user_reports(user_id, success=True):
-    try:
-        db = get_db_connection()
-        if not db:
-            return False
-        
-        if success:
-            db.users.update_one(
-                {"user_id": user_id},
-                {"$inc": {"total_reports": 1}},
-                upsert=True
-            )
-        return True
-    except Exception as e:
-        print(f"Error updating reports: {e}")
+def increment_reports(user_id):
+    db = get_db()
+    db.users.update_one(
+        {'user_id': user_id},
+        {'$inc': {'reports': 1}}
+    )
+
+# Validation functions
+def is_valid_username(username):
+    if not username.startswith('@'):
         return False
+    clean = username[1:].strip()
+    return bool(re.match(r'^[a-zA-Z0-9._]{1,30}$', clean))
 
-def validate_username(username):
-    clean_username = username.replace('@', '')
-    
-    # Basic validation
-    if not re.match(r'^[a-zA-Z0-9._]+$', clean_username):
-        return False, "invalid_chars"
-    
-    if len(clean_username) < 1 or len(clean_username) > 30:
-        return False, "invalid_length"
-    
-    return True, clean_username
+# Keyboard helpers
+def get_lang_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("English 🇺🇸", callback_data='lang_en')],
+        [InlineKeyboardButton("Hindi 🇮🇳", callback_data='lang_hi')]
+    ])
 
-def is_admin(user_id):
-    return int(user_id) == ADMIN_ID
-
-def get_main_keyboard(lang='en', is_admin_user=False):
-    buttons = BUTTON_TEXTS[lang]
-    
-    keyboard = [
-        [KeyboardButton(buttons['report_attack']), KeyboardButton(buttons['profile'])],
-        [KeyboardButton(buttons['my_reports']), KeyboardButton(buttons['home'])]
+def get_main_keyboard(lang, is_admin=False):
+    buttons = [
+        [KeyboardButton("⚔️ Report Account")],
+        [KeyboardButton("👤 Profile"), KeyboardButton("📊 Stats")],
+        [KeyboardButton("⚙️ Settings")]
     ]
-    
-    if is_admin_user:
-        keyboard.append([KeyboardButton(buttons['admin_panel'])])
-    
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    if is_admin:
+        buttons.append([KeyboardButton("👑 Admin Panel")])
+    return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-def get_report_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
+def get_report_types_keyboard():
+    keyboard = []
+    for key, value in REPORT_TYPES.items():
+        keyboard.append([InlineKeyboardButton(value, callback_data=f'type_{key}')])
+    return InlineKeyboardMarkup(keyboard)
+
+def get_report_control_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton(buttons['start_new_report'])],
-        [KeyboardButton("⬅️ Back"), KeyboardButton(buttons['home'])]
+        [KeyboardButton("🛑 Stop Reporting")],
+        [KeyboardButton("🏠 Main Menu")]
     ], resize_keyboard=True)
 
-def get_attack_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
+def get_admin_keyboard():
     return ReplyKeyboardMarkup([
-        [KeyboardButton(buttons['stop_attack'])],
-        [KeyboardButton(buttons['home'])]
+        [KeyboardButton("📊 User Stats"), KeyboardButton("📢 Broadcast")],
+        [KeyboardButton("🏠 Main Menu")]
     ], resize_keyboard=True)
 
-def get_login_keyboard(lang='en'):
-    buttons = BUTTON_TEXTS[lang]
-    return ReplyKeyboardMarkup([
-        [KeyboardButton(buttons['login']), KeyboardButton(buttons['continue_without_login'])]
-    ], resize_keyboard=True)
-
-async def start(update: Update, context: CallbackContext):
+# Handlers
+async def start(update: Update, context: CallbackContext) -> int:
     user_id = str(update.effective_user.id)
-    is_admin_user = is_admin(user_id)
     
-    user_data = get_user(user_id)
-    
-    if not user_data:
-        # New user - offer optional login
+    # Check if user exists
+    user = get_user(user_id)
+    if user:
+        lang = user.get('language', 'en')
         await update.message.reply_text(
-            STRINGS['en']['welcome'],
-            parse_mode='HTML'
-        )
-        
-        await asyncio.sleep(1)
-        
-        await update.message.reply_text(
-            STRINGS['en']['optional_login'],
-            reply_markup=get_login_keyboard('en'),
-            parse_mode='HTML'
-        )
-        return REGISTER
-    else:
-        # Existing user
-        lang = user_data.get('lang', 'en')
-        await update.message.reply_text(
-            STRINGS[lang]['main_menu'],
-            reply_markup=get_main_keyboard(lang, is_admin_user),
+            STRINGS[lang]['main_menu'].format(
+                ig_username=user.get('ig_username', ''),
+                reports=user.get('reports', 0)
+            ),
+            reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
             parse_mode='HTML'
         )
         return MAIN_MENU
-
-async def handle_login_choice(update: Update, context: CallbackContext):
-    text = update.message.text
-    user_id = str(update.effective_user.id)
-    
-    if text == BUTTON_TEXTS['en']['login']:
-        await update.message.reply_text(
-            "📱 Please enter your Instagram username:"
-        )
-        return IG_USERNAME
-    else:
-        # Continue without login
-        user_data = {
-            "user_id": user_id,
-            "username": update.effective_user.username or "User",
-            "display_name": update.effective_user.first_name or "User",
-            "total_reports": 0
-        }
-        save_user(user_id, user_data)
-        
-        await update.message.reply_text(
-            STRINGS['en']['login_canceled'],
-            reply_markup=get_main_keyboard('en', is_admin(user_id)),
-            parse_mode='HTML'
-        )
-        return MAIN_MENU
-
-async def handle_ig_username(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    ig_username = update.message.text.strip().replace('@', '')
-    
-    # Basic validation
-    if not re.match(r'^[a-zA-Z0-9._]+$', ig_username):
-        await update.message.reply_text(
-            "❌ Invalid username format! Please enter a valid Instagram username."
-        )
-        return IG_USERNAME
-    
-    context.user_data['ig_username'] = ig_username
     
     await update.message.reply_text(
-        "🔑 Please enter your Instagram password:"
+        STRINGS['en']['welcome'],
+        reply_markup=get_lang_keyboard(),
+        parse_mode='HTML'
     )
+    return LANGUAGE
+
+async def set_language(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    
+    lang = query.data.split('_')[1]
+    context.user_data['language'] = lang
+    
+    await query.edit_message_text(STRINGS[lang]['register'], parse_mode='HTML')
+    return REGISTER
+
+async def register(update: Update, context: CallbackContext) -> int:
+    user_id = str(update.effective_user.id)
+    display_name = update.message.text.strip()
+    lang = context.user_data.get('language', 'en')
+    
+    if len(display_name) < 2:
+        await update.message.reply_text("❌ Name too short! Please enter at least 2 characters")
+        return REGISTER
+    
+    context.user_data['display_name'] = display_name
+    save_user(user_id, {
+        'display_name': display_name,
+        'language': lang
+    })
+    
+    await update.message.reply_text(STRINGS[lang]['ig_username'], parse_mode='HTML')
+    return IG_USERNAME
+
+async def get_ig_username(update: Update, context: CallbackContext) -> int:
+    user_id = str(update.effective_user.id)
+    username = update.message.text.strip()
+    lang = context.user_data.get('language', 'en')
+    
+    if not username:
+        await update.message.reply_text("❌ Please enter a valid Instagram username")
+        return IG_USERNAME
+    
+    context.user_data['ig_username'] = username
+    await update.message.reply_text(STRINGS[lang]['ig_password'], parse_mode='HTML')
     return IG_PASSWORD
 
-async def handle_ig_password(update: Update, context: CallbackContext):
+async def get_ig_password(update: Update, context: CallbackContext) -> int:
     user_id = str(update.effective_user.id)
+    password = update.message.text.strip()
+    lang = context.user_data.get('language', 'en')
     ig_username = context.user_data.get('ig_username', '')
     
-    # Save user with IG credentials
-    user_data = {
-        "user_id": user_id,
-        "username": update.effective_user.username or "User",
-        "display_name": update.effective_user.first_name or "User",
-        "ig_username": ig_username,
-        "total_reports": 0
-    }
-    save_user(user_id, user_data)
+    if not password:
+        await update.message.reply_text("❌ Please enter your password")
+        return IG_PASSWORD
+    
+    # Save user with Instagram credentials
+    save_user(user_id, {
+        'ig_username': ig_username,
+        'ig_password': password,
+        'language': lang
+    })
     
     await update.message.reply_text(
-        f"✅ Login successful! Welcome @{ig_username}",
-        reply_markup=get_main_keyboard('en', is_admin(user_id)),
+        STRINGS[lang]['login_success'].format(username=ig_username),
+        reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
         parse_mode='HTML'
     )
     return MAIN_MENU
 
-async def handle_main_menu(update: Update, context: CallbackContext):
+async def main_menu(update: Update, context: CallbackContext) -> int:
     user_id = str(update.effective_user.id)
-    user_data = get_user(user_id) or {}
-    lang = 'en'
     text = update.message.text
-    buttons = BUTTON_TEXTS[lang]
-    is_admin_user = is_admin(user_id)
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
     
-    if text == buttons['report_attack']:
+    if text == "⚔️ Report Account":
         await update.message.reply_text(
             STRINGS[lang]['report_menu'],
-            reply_markup=get_report_keyboard(lang),
+            reply_markup=ReplyKeyboardMarkup([[KeyboardButton("🏠 Main Menu")]], resize_keyboard=True),
             parse_mode='HTML'
         )
         return REPORT_MENU
-        
-    elif text == buttons['profile']:
-        reports = user_data.get('total_reports', 0)
+    
+    elif text == "👤 Profile":
         await update.message.reply_text(
-            STRINGS[lang]['profile'].format(reports=reports),
+            STRINGS[lang]['main_menu'].format(
+                ig_username=user.get('ig_username', ''),
+                reports=user.get('reports', 0)
+            ),
             parse_mode='HTML'
         )
-        return MAIN_MENU
-        
-    elif text == buttons['my_reports']:
-        # Simplified for public access
+    
+    elif text == "📊 Stats":
         await update.message.reply_text(
-            "📊 Your report history will appear here",
+            f"📈 <b>Your Statistics</b>\n\n"
+            f"• Total Reports: {user.get('reports', 0)}\n"
+            f"• Account: @{user.get('ig_username', '')}\n"
+            f"• Member since: {user.get('created_at', datetime.now()).strftime('%Y-%m-%d')}",
             parse_mode='HTML'
         )
-        return MAIN_MENU
-        
-    elif text == buttons['home']:
+    
+    elif text == "👑 Admin Panel" and user_id == str(ADMIN_ID):
         await update.message.reply_text(
-            STRINGS[lang]['main_menu'],
-            reply_markup=get_main_keyboard(lang, is_admin_user),
+            STRINGS[lang]['admin_panel'],
+            reply_markup=get_admin_keyboard(),
             parse_mode='HTML'
         )
-        return MAIN_MENU
-        
-    elif text == buttons['admin_panel'] and is_admin_user:
-        return await admin_panel(update, context)
+        return ADMIN_PANEL
     
     return MAIN_MENU
 
-async def handle_report_menu(update: Update, context: CallbackContext):
+async def report_menu(update: Update, context: CallbackContext) -> int:
     user_id = str(update.effective_user.id)
-    lang = 'en'
     text = update.message.text
-    buttons = BUTTON_TEXTS[lang]
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
     
-    if text == buttons['start_new_report']:
+    if text == "🏠 Main Menu":
         await update.message.reply_text(
-            STRINGS[lang]['send_username'],
-            parse_mode='HTML'
-        )
-        return USERNAME_INPUT
-        
-    elif text == "⬅️ Back":
-        await update.message.reply_text(
-            STRINGS[lang]['main_menu'],
-            reply_markup=get_main_keyboard(lang, is_admin(user_id))),
+            STRINGS[lang]['main_menu'].format(
+                ig_username=user.get('ig_username', ''),
+                reports=user.get('reports', 0)
+            ),
+            reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
             parse_mode='HTML'
         )
         return MAIN_MENU
-        
-    elif text == buttons['home']:
-        await update.message.reply_text(
-            STRINGS[lang]['main_menu'],
-            reply_markup=get_main_keyboard(lang, is_admin(user_id))),
-            parse_mode='HTML'
-        )
-        return MAIN_MENU
-    
-    return REPORT_MENU
-
-async def handle_username_input(update: Update, context: CallbackContext):
-    lang = 'en'
-    username_input = update.message.text.strip()
-    
-    # Validate username
-    is_valid, result = validate_username(username_input)
-    
-    if not is_valid:
-        await update.message.reply_text(
-            STRINGS[lang]['invalid_username'],
-            parse_mode='HTML'
-        )
-        return USERNAME_INPUT
-    
-    # Add @ if not present
-    username = result if username_input.startswith('@') else f"@{result}"
-    context.user_data['target_username'] = username
-    
-    # Create report type buttons
-    keyboard = []
-    for key, value in REPORT_TYPES.items():
-        keyboard.append([InlineKeyboardButton(value, callback_data=f'type_{key}')])
     
     await update.message.reply_text(
-        STRINGS[lang]['choose_report_type'],
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        STRINGS[lang]['target_prompt'],
+        parse_mode='HTML'
+    )
+    return TARGET_USERNAME
+
+async def get_target(update: Update, context: CallbackContext) -> int:
+    user_id = str(update.effective_user.id)
+    target = update.message.text.strip()
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
+    
+    if not is_valid_username(target):
+        await update.message.reply_text(
+            STRINGS[lang]['invalid_target'],
+            parse_mode='HTML'
+        )
+        return TARGET_USERNAME
+    
+    context.user_data['target'] = target
+    await update.message.reply_text(
+        STRINGS[lang]['report_type'],
+        reply_markup=get_report_types_keyboard(),
         parse_mode='HTML'
     )
     return REPORT_TYPE
 
-async def handle_report_type(update: Update, context: CallbackContext):
+async def set_report_type(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
     
-    user_id = str(query.from_user.id)
-    lang = 'en'
     report_type = query.data.split('_')[1]
-    
     context.user_data['report_type'] = report_type
+    user_id = str(query.from_user.id)
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
     
-    if report_type == 'impersonation':
-        await query.edit_message_text(
-            STRINGS[lang]['ask_impersonation_url'],
-            parse_mode='HTML'
-        )
-        return IMPERSONATION_URL
-    else:
-        username = context.user_data['target_username']
-        type_name = REPORT_TYPES[report_type]
-        
-        keyboard = [
+    await query.edit_message_text(
+        STRINGS[lang]['confirm_report'].format(
+            target=context.user_data['target'],
+            report_type=REPORT_TYPES[report_type]
+        ),
+        reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🚀 START REPORTING", callback_data='start_report')],
             [InlineKeyboardButton("❌ CANCEL", callback_data='cancel_report')]
-        ]
-        
-        await query.edit_message_text(
-            STRINGS[lang]['confirm_start'].format(username=username, type=type_name),
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='HTML'
-        )
-        return REPORT_LOOP
-
-async def handle_impersonation_url(update: Update, context: CallbackContext):
-    lang = 'en'
-    context.user_data['impersonation_url'] = update.message.text
-    username = context.user_data['target_username']
-    
-    keyboard = [
-        [InlineKeyboardButton("🚀 START REPORTING", callback_data='start_report')],
-        [InlineKeyboardButton("❌ CANCEL", callback_data='cancel_report')]
-    ]
-    
-    await update.message.reply_text(
-        STRINGS[lang]['confirm_start'].format(username=username, type=REPORT_TYPES['impersonation']),
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        ]),
         parse_mode='HTML'
     )
-    return REPORT_LOOP
+    return REPORTING
 
-async def handle_report_loop(update: Update, context: CallbackContext):
+async def start_reporting(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
     
     user_id = str(query.from_user.id)
-    lang = 'en'
-    username = context.user_data.get('target_username', '')
-    report_type = context.user_data.get('report_type', 'spam')
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
+    target = context.user_data['target']
+    report_type = context.user_data['report_type']
     
-    if query.data == 'start_report':
-        context.user_data['strike_count'] = 0
-        
-        # Create reporting task
-        task = asyncio.create_task(
-            start_reporting(context, user_id, username, report_type, lang)
-        )
-        reporting_tasks[user_id] = task
-        
-        await query.edit_message_text(
-            STRINGS[lang]['reporting_started'].format(username=username),
-            parse_mode='HTML'
-        )
-        
-        # Change keyboard to attack mode
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="⚔️ Reporting in progress...",
-            reply_markup=get_attack_keyboard(lang),
-            parse_mode='HTML'
-        )
-        
-    elif query.data == 'stop_report':
-        # Cancel reporting task
-        if user_id in reporting_tasks:
-            reporting_tasks[user_id].cancel()
-            del reporting_tasks[user_id]
-        
-        total_strikes = context.user_data.get('strike_count', 0)
-        
-        try:
-            await query.edit_message_text(
-                STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
-                parse_mode='HTML'
-            )
-        except:
-            pass
-        
-        # Return to main menu
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=STRINGS[lang]['main_menu'],
-            reply_markup=get_main_keyboard(lang, is_admin(user_id))),
-            parse_mode='HTML'
-        )
-        return MAIN_MENU
-        
-    elif query.data == 'cancel_report':
-        try:
-            await query.edit_message_text(
-                STRINGS[lang]['main_menu'],
-                parse_mode='HTML'
-            )
-        except:
-            pass
-        
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=STRINGS[lang]['main_menu'],
-            reply_markup=get_main_keyboard(lang, is_admin(user_id))),
-            parse_mode='HTML'
-        )
-        return MAIN_MENU
+    # Start reporting task
+    context.user_data['report_count'] = 0
+    context.user_data['reporting'] = True
     
-    return REPORT_LOOP
-
-async def handle_stop_attack(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    lang = 'en'
+    task = asyncio.create_task(
+        send_reports(context, user_id, target, report_type, lang)
+    )
+    context.user_data['reporting_task'] = task
     
-    # Cancel reporting task
-    if user_id in reporting_tasks:
-        reporting_tasks[user_id].cancel()
-        del reporting_tasks[user_id]
-    
-    total_strikes = context.user_data.get('strike_count', 0)
-    
-    await update.message.reply_text(
-        STRINGS[lang]['reporting_stopped'].format(total_strikes=total_strikes),
+    await query.edit_message_text(
+        STRINGS[lang]['reporting_started'].format(target=target),
         parse_mode='HTML'
     )
     
-    # Return to main menu
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="⚡ Reporting in progress...",
+        reply_markup=get_report_control_keyboard()
+    )
+    return REPORTING
+
+async def stop_reporting(update: Update, context: CallbackContext) -> int:
+    user_id = str(update.effective_user.id)
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
+    report_count = context.user_data.get('report_count', 0)
+    
+    # Stop reporting task
+    if 'reporting_task' in context.user_data:
+        context.user_data['reporting_task'].cancel()
+    
     await update.message.reply_text(
-        STRINGS[lang]['main_menu'],
-        reply_markup=get_main_keyboard(lang, is_admin(user_id))),
+        STRINGS[lang]['report_stopped'].format(count=report_count),
+        reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
         parse_mode='HTML'
     )
     return MAIN_MENU
 
-async def start_reporting(context: CallbackContext, user_id: str, username: str, report_type: str, lang: str):
-    report_count = 0
+async def cancel_reporting(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
     
+    user_id = str(query.from_user.id)
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
+    
+    await query.edit_message_text("❌ Reporting canceled")
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=STRINGS[lang]['main_menu'].format(
+            ig_username=user.get('ig_username', ''),
+            reports=user.get('reports', 0)
+        ),
+        reply_markup=get_main_keyboard(lang, is_admin=(user_id == str(ADMIN_ID))),
+        parse_mode='HTML'
+    )
+    return MAIN_MENU
+
+async def send_reports(context: CallbackContext, user_id: str, target: str, report_type: str, lang: str):
+    count = 0
     try:
-        while True:
-            report_count += 1
-            context.user_data['strike_count'] = report_count
+        while context.user_data.get('reporting', True):
+            count += 1
+            context.user_data['report_count'] = count
             
             # Random success/failure
-            success_rate = random.choice([True, True, True, False])  # 75% success rate
+            success = random.random() > 0.2  # 80% success rate
             
-            # Update user report count
-            update_user_reports(user_id, success_rate)
-            
-            if success_rate:
-                message = STRINGS[lang]['report_success'].format(count=report_count, username=username)
+            if success:
+                # Update user's report count
+                increment_reports(user_id)
+                message = STRINGS[lang]['report_success'].format(count=count)
             else:
-                message = STRINGS[lang]['report_failed'].format(count=report_count, username=username)
+                message = STRINGS[lang]['report_failed'].format(count=count)
             
-            # Send report status periodically
-            if report_count % 3 == 1 or report_count <= 3:
+            # Send update every 3 reports
+            if count % 3 == 0:
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=message,
                     parse_mode='HTML'
                 )
             
-            # Random delay
-            await asyncio.sleep(random.uniform(1.5, 3.0))
-            
+            # Random delay between 1-3 seconds
+            await asyncio.sleep(random.uniform(1.0, 3.0))
     except asyncio.CancelledError:
         pass
-    except Exception as e:
-        print(f"Reporting error: {e}")
 
-# Admin functions (only for you)
-async def admin_panel(update: Update, context: CallbackContext):
+async def admin_panel(update: Update, context: CallbackContext) -> int:
     user_id = str(update.effective_user.id)
-    if not is_admin(user_id):
+    text = update.message.text
+    user = get_user(user_id)
+    lang = user.get('language', 'en')
+    
+    if text == "🏠 Main Menu":
+        await update.message.reply_text(
+            STRINGS[lang]['main_menu'].format(
+                ig_username=user.get('ig_username', ''),
+                reports=user.get('reports', 0)
+            ),
+            reply_markup=get_main_keyboard(lang, is_admin=True),
+            parse_mode='HTML'
+        )
         return MAIN_MENU
     
+    elif text == "📊 User Stats":
+        db = get_db()
+        total_users = db.users.count_documents({})
+        total_reports = db.users.aggregate([{
+            "$group": {"_id": None, "total": {"$sum": "$reports"}}
+        }]).next().get('total', 0)
+        
+        await update.message.reply_text(
+            f"📊 <b>Bot Statistics</b>\n\n"
+            f"• Total Users: {total_users}\n"
+            f"• Total Reports Sent: {total_reports}\n"
+            f"• Active Today: Calculating...",
+            parse_mode='HTML'
+        )
+    
+    elif text == "📢 Broadcast":
+        await update.message.reply_text("✉️ Enter broadcast message:")
+        return BROADCAST_MESSAGE
+    
+    return ADMIN_PANEL
+
+async def broadcast_message(update: Update, context: CallbackContext) -> int:
+    user_id = str(update.effective_user.id)
+    message = update.message.text
+    db = get_db()
+    
+    users = db.users.find()
+    count = 0
+    
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user['user_id'],
+                text=f"📢 <b>Admin Broadcast</b>\n\n{message}",
+                parse_mode='HTML'
+            )
+            count += 1
+            await asyncio.sleep(0.1)  # Avoid rate limits
+        except Exception as e:
+            print(f"Failed to send to {user['user_id']}: {str(e)}")
+    
     await update.message.reply_text(
-        STRINGS['en']['admin_panel'],
-        reply_markup=ReplyKeyboardMarkup([
-            ["📢 Broadcast", "👥 Users"],
-            ["📊 Statistics", "⬅️ Back"]
-        ], resize_keyboard=True),
+        STRINGS['en']['broadcast_sent'].format(count=count),
+        reply_markup=get_admin_keyboard(),
         parse_mode='HTML'
     )
     return ADMIN_PANEL
 
-async def handle_admin_buttons(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    if not is_admin(user_id):
-        return MAIN_MENU
-    
-    text = update.message.text
-    
-    if text == "⬅️ Back":
-        await update.message.reply_text(
-            STRINGS['en']['main_menu'],
-            reply_markup=get_main_keyboard('en', True),
-            parse_mode='HTML'
-        )
-        return MAIN_MENU
-        
-    elif text == "📢 Broadcast":
-        await update.message.reply_text(
-            STRINGS['en']['broadcast_prompt'],
-            parse_mode='HTML'
-        )
-        return BROADCAST_MESSAGE
-        
-    elif text == "👥 Users":
-        try:
-            db = get_db_connection()
-            users = list(db.users.find().limit(10))
-            
-            user_list = ""
-            for user in users:
-                user_list += f"👤 {user.get('display_name', 'User')} - 📊 {user.get('total_reports', 0)} reports\n"
-            
-            await update.message.reply_text(
-                STRINGS['en']['user_list'].format(users=user_list),
-                parse_mode='HTML'
-            )
-        except Exception as e:
-            await update.message.reply_text(f"Error: {str(e)}")
-    
-    elif text == "📊 Statistics":
-        try:
-            db = get_db_connection()
-            total_users = db.users.count_documents({})
-            total_reports = db.users.aggregate([{
-                "$group": {"_id": None, "total": {"$sum": "$total_reports"}}
-            }]).next().get('total', 0)
-            
-            await update.message.reply_text(
-                STRINGS['en']['user_stats'].format(total=total_users) + f"\n📈 Total Reports: <b>{total_reports}</b>",
-                parse_mode='HTML'
-            )
-        except Exception as e:
-            await update.message.reply_text(f"Error: {str(e)}")
-    
-    elif text == "🏠 Home":
-        await update.message.reply_text(
-            STRINGS['en']['main_menu'],
-            reply_markup=get_main_keyboard('en', True),
-            parse_mode='HTML'
-        )
-        return MAIN_MENU
-    
-    return ADMIN_PANEL
-
-async def handle_broadcast(update: Update, context: CallbackContext):
-    user_id = str(update.effective_user.id)
-    if not is_admin(user_id):
-        return ADMIN_PANEL
-    
-    message = update.message.text
-    try:
-        db = get_db_connection()
-        users = db.users.find()
-        count = 0
-        
-        for user in users:
-            try:
-                await context.bot.send_message(
-                    chat_id=user['user_id'],
-                    text=f"📢 <b>ANNOUNCEMENT</b>\n\n{message}",
-                    parse_mode='HTML'
-                )
-                count += 1
-                await asyncio.sleep(0.2)
-            except:
-                pass
-        
-        await update.message.reply_text(
-            STRINGS['en']['broadcast_sent'].format(count=count),
-            parse_mode='HTML'
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Error: {str(e)}")
-    
-    return ADMIN_PANEL
+async def cancel(update: Update, context: CallbackContext) -> int:
+    await update.message.reply_text("Operation canceled")
+    return ConversationHandler.END
 
 def main():
-    # Initialize database
-    init_database()
+    # Create application
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
     
-    # Get bot token
-    BOT_TOKEN = os.getenv("BOT_TOKEN", TELEGRAM_BOT_TOKEN)
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN not found!")
-        return
+    # Conversation handler
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            LANGUAGE: [CallbackQueryHandler(set_language, pattern='^lang_')],
+            REGISTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, register)],
+            IG_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_ig_username)],
+            IG_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_ig_password)],
+            MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)],
+            REPORT_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, report_menu)],
+            TARGET_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_target)],
+            REPORT_TYPE: [CallbackQueryHandler(set_report_type, pattern='^type_')],
+            REPORTING: [
+                CallbackQueryHandler(start_reporting, pattern='^start_report$'),
+                CallbackQueryHandler(cancel_reporting, pattern='^cancel_report$'),
+                MessageHandler(filters.Regex(r'🛑 Stop Reporting'), stop_reporting)
+            ],
+            ADMIN_PANEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_panel)],
+            BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)]
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    app.add_handler(conv_handler)
+    
+    # Start the bot
+    print("🚀 Bot is running...")
+    app.run_polling()
 
-    try:
-        print("🚀 Starting Public IG Reporter Bot...")
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-        # Conversation handler
-        conv = ConversationHandler(
-            entry_points=[CommandHandler('start', start)],
-            states={
-                REGISTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_login_choice)],
-                IG_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ig_username)],
-                IG_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ig_password)],
-                MAIN_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_main_menu)],
-                REPORT_MENU: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_report_menu)],
-                USERNAME_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username_input)],
-                REPORT_TYPE: [CallbackQueryHandler(handle_report_type, pattern='^type_')],
-                IMPERSONATION_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_impersonation_url)],
-                REPORT_LOOP: [
-                    CallbackQueryHandler(handle_report_loop),
-                    MessageHandler(filters.Regex(BUTTON_TEXTS['en']['stop_attack']), handle_stop_attack)
-                ],
-                ADMIN_PANEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_buttons)],
-                BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast)]
-            },
-            fallbacks=[CommandHandler('start', start)],
-            per_user=True
-        )
-
-        app.add_handler(conv)
-        print("✅ Bot is ready!")
-        
-        # Production setup
-        if os.environ.get('RENDER') or os.environ.get('PORT'):
-            print("🌐 Production mode - Starting web server")
-            
-            from http.server import HTTPServer, BaseHTTPRequestHandler
-            import threading
-            
-            class HealthHandler(BaseHTTPRequestHandler):
-                def do_GET(self):
-                    self.send_response(200)
-                    self.send_header('Content-type', 'text/plain')
-                    self.end_headers()
-                    self.wfile.write(b'Bot is running')
-            
-            port = int(os.environ.get('PORT', 8000))
-            server = HTTPServer(('0.0.0.0', port), HealthHandler)
-            
-            def run_server():
-                print(f"Server running on port {port}")
-                server.serve_forever()
-            
-            server_thread = threading.Thread(target=run_server, daemon=True)
-            server_thread.start()
-            
-            app.run_polling(drop_pending_updates=True)
-        else:
-            print("💻 Development mode - Starting polling")
-            app.run_polling(drop_pending_updates=True)
-        
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
