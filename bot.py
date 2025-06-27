@@ -1249,13 +1249,6 @@ async def handle_broadcast(update: Update, context: CallbackContext):
     
     return ADMIN_PANEL
 
-# HTTP Server for Render port binding
-def run_http_server():
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", PORT), handler) as httpd:
-        print(f"🌐 HTTP server running on port {PORT}")
-        httpd.serve_forever()
-
 def create_application():
     # Create application with conflict prevention settings
     return ApplicationBuilder().token(BOT_TOKEN).build()
@@ -1311,13 +1304,11 @@ def main():
     is_production = os.environ.get('RENDER') or os.environ.get('PORT')
     
     if is_production:
-        print("🌐 Production mode detected - Starting web server")
+        print("🌐 Production mode detected")
+        port = int(os.environ.get('PORT', 10000))
         
-        # For production deployment, start web server
-        import threading
-        from http.server import HTTPServer, BaseHTTPRequestHandler
-        
-        class HealthHandler(BaseHTTPRequestHandler):
+        # Health check server for Render
+        class HealthHandler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 self.send_response(200)
                 self.send_header('Content-type', 'text/plain')
@@ -1327,33 +1318,27 @@ def main():
             def log_message(self, format, *args):
                 pass  # Suppress HTTP logs
         
-        # Start health check server
-        port = int(os.environ.get('PORT', 10000))
-        httpd = HTTPServer(('0.0.0.0', port), HealthHandler)
+        # Start health check server in background thread
+        def start_health_server():
+            with socketserver.TCPServer(("", port), HealthHandler) as httpd:
+                print(f"🌐 Health server running on port {port}")
+                httpd.serve_forever()
         
-        def start_server():
-            print(f"🌐 Health check server started on port {port}")
-            httpd.serve_forever()
+        health_thread = Thread(target=start_health_server, daemon=True)
+        health_thread.start()
         
-        # Start server in background thread
-        server_thread = threading.Thread(target=start_server, daemon=True)
-        server_thread.start()
-        
-        # Try polling with better conflict handling
+        # Start bot with conflict handling
         try:
             print("🔄 Starting bot polling...")
             app.run_polling(drop_pending_updates=True, allowed_updates=None)
-        except Exception as polling_error:
-            error_str = str(polling_error)
-            if "Conflict" in error_str and ("getUpdates" in error_str or "terminated" in error_str):
-                print("🔄 Another bot instance is already running.")
-                print("💡 This is normal for deployment - keeping web server alive.")
-                # Keep web server running even if polling fails
-                import time
-                while True:
-                    time.sleep(60)
-            else:
-                raise polling_error
+        except Conflict:
+            print("🔄 Another bot instance is already running - keeping health server alive")
+            # Keep process alive for health checks
+            while True:
+                time.sleep(60)
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
+            raise
     else:
         print("💻 Development mode - Starting polling only")
         # Check database connection
@@ -1367,9 +1352,4 @@ def main():
         app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
-    # Start HTTP server in background thread if running on Render
-    if os.environ.get('RENDER', False):
-        Thread(target=run_http_server, daemon=True).start()
-        print(f"🚀 Starting HTTP server on port {PORT} for Render")
-    
     main()
